@@ -1,0 +1,63 @@
+from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy.orm import Session
+
+from djcp_alarm_ai.db import get_db
+from djcp_alarm_ai.errors import AmbiguousTagError, AnswerGenerationError, NotFoundError
+from djcp_alarm_ai.repositories import DescriptionRepository, OperationalRepository
+from djcp_alarm_ai.schemas import (
+    AnalysisResponse,
+    QuestionRequest,
+    TagAnalysisRequest,
+)
+from djcp_alarm_ai.service import AlarmAnalysisService
+
+
+router = APIRouter(prefix="/v2/analyses", tags=["analyses-v2"])
+
+
+def get_service(db: Session = Depends(get_db)) -> AlarmAnalysisService:
+    return AlarmAnalysisService(
+        operational_repository=OperationalRepository(db),
+        description_repository=DescriptionRepository(db),
+    )
+
+
+@router.post("/from-alarm/{alarm_id}", response_model=AnalysisResponse)
+def analyze_alarm(
+    alarm_id: int,
+    payload: QuestionRequest,
+    service: AlarmAnalysisService = Depends(get_service),
+) -> AnalysisResponse:
+    try:
+        return service.analyze_alarm(alarm_id, payload.question)
+    except NotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except AnswerGenerationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Local LLM answer generation is unavailable.",
+        ) from exc
+
+
+@router.post("/from-tag", response_model=AnalysisResponse)
+def analyze_tag(
+    payload: TagAnalysisRequest,
+    service: AlarmAnalysisService = Depends(get_service),
+) -> AnalysisResponse:
+    try:
+        return service.analyze_tag(payload.tag_name, payload.question, payload.asset_id)
+    except NotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except AmbiguousTagError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "message": str(exc),
+                "candidates": [candidate.model_dump() for candidate in exc.candidates],
+            },
+        ) from exc
+    except AnswerGenerationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Local LLM answer generation is unavailable.",
+        ) from exc

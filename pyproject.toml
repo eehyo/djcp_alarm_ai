@@ -1,0 +1,32 @@
+[project]
+name = "djcp-alarm-ai"
+version = "0.1.0"
+description = "Standalone alarm and tag description based fault analysis backend."
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.30.0",
+    "pydantic>=2.7.0",
+    "pydantic-settings>=2.4.0",
+    "sqlalchemy>=2.0.30",
+    "psycopg[binary]>=3.2.0",
+    "openai>=1.40.0",
+    "python-dotenv>=1.0.1",
+]
+
+[project.scripts]
+djcp-description-sync = "djcp_alarm_ai.cli.sync_descriptions:main"
+djcp-seed-description-tags = "djcp_alarm_ai.cli.seed_description_tags:main"
+djcp-schema-check = "djcp_alarm_ai.cli.check_schema:main"
+djcp-llm-smoke-test = "djcp_alarm_ai.cli.smoke_llm:main"
+
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+namespaces = true
+
+[tool.setuptools.package-data]
+djcp_alarm_ai = ["prompts/**/*.md"]
