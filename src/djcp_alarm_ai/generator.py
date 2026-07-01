@@ -101,12 +101,11 @@ class OpenAICompatibleAnswerGenerator:
 
     def generate(self, context: AnalysisContext) -> AnalysisAnswer:
         system_prompt = (self.prompt_dir / "system.md").read_text(encoding="utf-8")
-        context_json = json.dumps(context.model_dump(mode="json"), ensure_ascii=False)
+        context_json = _build_context_payload(context)
 
         content = self._request_answer_content(
             system_prompt,
             context_json,
-            no_think=False,
         )
         try:
             return _parse_answer_content(content)
@@ -120,8 +119,7 @@ class OpenAICompatibleAnswerGenerator:
 
         retry_content = self._request_answer_content(
             system_prompt,
-            context_json,
-            no_think=True,
+            _build_context_payload(context, no_think_question=True),
         )
         try:
             answer = _parse_answer_content(retry_content)
@@ -139,11 +137,8 @@ class OpenAICompatibleAnswerGenerator:
     def _request_answer_content(
         self,
         system_prompt: str,
-        context_json: str,
-        *,
-        no_think: bool,
+        user_content: str,
     ) -> str:
-        user_content = f"/no_think\n{context_json}" if no_think else context_json
         try:
             response = self.client.chat.completions.create(
                 model=self.settings.llm_model,
@@ -192,6 +187,19 @@ def _split_guidance(value: str) -> list[str]:
 
 def _dedupe(values: list[str]) -> list[str]:
     return list(dict.fromkeys(value for value in values if value))
+
+
+def _build_context_payload(
+    context: AnalysisContext,
+    *,
+    no_think_question: bool = False,
+) -> str:
+    payload = context.model_dump(mode="json")
+    if no_think_question:
+        question = str(payload.get("question") or "")
+        if not question.lstrip().startswith("/no_think"):
+            payload["question"] = f"/no_think\n{question}"
+    return json.dumps(payload, ensure_ascii=False)
 
 
 def _parse_answer_content(content: str) -> AnalysisAnswer:
