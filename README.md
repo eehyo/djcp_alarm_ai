@@ -43,7 +43,7 @@ DB-only 모드는 Qwen을 사용하지 않고 DB 연결과 Description 매핑만
 
 ## 현재 폴더 구조
 
-현재 작업 폴더는 `/workspace/djcp_alarm_ai`입니다.
+현재 작업 폴더는 `<project-root>/djcp_alarm_ai`입니다.
 
 ```text
 .
@@ -75,7 +75,6 @@ DB-only 모드는 Qwen을 사용하지 않고 DB 연결과 Description 매핑만
     |   |-- cli/
     |   |-- knowledge/
     |   `-- prompts/
-    `-- djcp_alarm_ai.egg-info/
 ```
 
 로컬에서 생성되는 파일:

@@ -1,4 +1,5 @@
 import json
+import logging
 import re
 from pathlib import Path
 from typing import Protocol
@@ -9,6 +10,8 @@ from pydantic import ValidationError
 from djcp_alarm_ai.config import Settings, get_settings
 from djcp_alarm_ai.errors import AnswerGenerationError
 from djcp_alarm_ai.schemas import AnalysisAnswer, AnalysisContext, CauseCandidate
+
+logger = logging.getLogger(__name__)
 
 
 class AnswerGenerator(Protocol):
@@ -98,6 +101,49 @@ class OpenAICompatibleAnswerGenerator:
 
     def generate(self, context: AnalysisContext) -> AnalysisAnswer:
         system_prompt = (self.prompt_dir / "system.md").read_text(encoding="utf-8")
+        context_json = json.dumps(context.model_dump(mode="json"), ensure_ascii=False)
+
+        content = self._request_answer_content(
+            system_prompt,
+            context_json,
+            no_think=False,
+        )
+        try:
+            return _parse_answer_content(content)
+        except (TypeError, ValueError, ValidationError) as first_exc:
+            logger.warning(
+                "LLM answer validation failed; retrying with /no_think: %s; "
+                "content preview=%r",
+                first_exc,
+                content[:1000],
+            )
+
+        retry_content = self._request_answer_content(
+            system_prompt,
+            context_json,
+            no_think=True,
+        )
+        try:
+            answer = _parse_answer_content(retry_content)
+        except (TypeError, ValueError, ValidationError) as retry_exc:
+            logger.warning(
+                "LLM /no_think retry validation failed: %s; content preview=%r",
+                retry_exc,
+                retry_content[:1000],
+            )
+            raise AnswerGenerationError("LLM answer validation failed") from retry_exc
+
+        logger.info("LLM /no_think retry succeeded")
+        return answer
+
+    def _request_answer_content(
+        self,
+        system_prompt: str,
+        context_json: str,
+        *,
+        no_think: bool,
+    ) -> str:
+        user_content = f"/no_think\n{context_json}" if no_think else context_json
         try:
             response = self.client.chat.completions.create(
                 model=self.settings.llm_model,
@@ -106,7 +152,7 @@ class OpenAICompatibleAnswerGenerator:
                     {"role": "system", "content": system_prompt},
                     {
                         "role": "user",
-                        "content": json.dumps(context.model_dump(mode="json"), ensure_ascii=False),
+                        "content": user_content,
                     },
                 ],
                 response_format={
@@ -118,9 +164,9 @@ class OpenAICompatibleAnswerGenerator:
                     },
                 },
             )
-            content = response.choices[0].message.content or "{}"
-            return AnalysisAnswer.model_validate_json(content)
-        except (OpenAIError, ValidationError, IndexError) as exc:
+            return response.choices[0].message.content or ""
+        except (OpenAIError, IndexError) as exc:
+            logger.exception("LLM answer request failed")
             raise AnswerGenerationError("LLM answer generation failed") from exc
 
 
@@ -146,3 +192,67 @@ def _split_guidance(value: str) -> list[str]:
 
 def _dedupe(values: list[str]) -> list[str]:
     return list(dict.fromkeys(value for value in values if value))
+
+
+def _parse_answer_content(content: str) -> AnalysisAnswer:
+    payload = _extract_json_payload(content)
+    payload = _normalize_answer_payload(payload)
+    return AnalysisAnswer.model_validate(payload)
+
+
+def _extract_json_payload(content: str) -> object:
+    decoder = json.JSONDecoder()
+    stripped = content.strip()
+    try:
+        payload, _ = decoder.raw_decode(stripped)
+        if _looks_like_answer_payload(payload):
+            return payload
+    except json.JSONDecodeError:
+        pass
+
+    first_payload = None
+    for index, char in enumerate(content):
+        if char != "{":
+            continue
+        try:
+            payload, _ = decoder.raw_decode(content[index:])
+            if _looks_like_answer_payload(payload):
+                return payload
+            if first_payload is None:
+                first_payload = payload
+        except json.JSONDecodeError:
+            continue
+    if first_payload is not None:
+        return first_payload
+    raise ValueError("LLM response did not contain a JSON object")
+
+
+def _looks_like_answer_payload(payload: object) -> bool:
+    return isinstance(payload, dict) and "summary" in payload
+
+
+def _normalize_answer_payload(payload: object) -> object:
+    if not isinstance(payload, dict):
+        return payload
+
+    normalized = dict(payload)
+    for key in ("likely_causes", "checks", "actions", "warnings"):
+        if normalized.get(key) is None:
+            normalized[key] = []
+
+    causes = normalized.get("likely_causes")
+    if isinstance(causes, list):
+        normalized["likely_causes"] = [_normalize_cause_payload(cause) for cause in causes]
+    return normalized
+
+
+def _normalize_cause_payload(payload: object) -> object:
+    if not isinstance(payload, dict):
+        return payload
+
+    normalized = dict(payload)
+    for key in ("confidence", "basis"):
+        value = normalized.get(key)
+        if isinstance(value, str):
+            normalized[key] = value.strip().upper().replace(" ", "_")
+    return normalized
