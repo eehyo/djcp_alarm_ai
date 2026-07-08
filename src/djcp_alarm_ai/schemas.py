@@ -1,6 +1,5 @@
 from datetime import datetime
 from decimal import Decimal
-from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -117,15 +116,9 @@ class AnalysisContext(BaseModel):
     tag_knowledge: TagKnowledge | None = None
 
 
-class CauseCandidate(BaseModel):
-    cause: str
-    confidence: Literal["HIGH", "MEDIUM", "LOW"]
-    basis: Literal["DATABASE", "TAG_DESCRIPTION", "INFERENCE"]
-
-
 class AnalysisAnswer(BaseModel):
     summary: str
-    likely_causes: list[CauseCandidate] = Field(default_factory=list)
+    likely_causes: list[str] = Field(default_factory=list)
     checks: list[str] = Field(default_factory=list)
     actions: list[str] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)

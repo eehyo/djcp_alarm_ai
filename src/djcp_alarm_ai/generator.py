@@ -1,7 +1,9 @@
 import json
 import logging
 import re
+import sys
 from pathlib import Path
+from time import perf_counter
 from typing import Protocol
 
 from openai import OpenAI, OpenAIError
@@ -9,7 +11,7 @@ from pydantic import ValidationError
 
 from djcp_alarm_ai.config import Settings, get_settings
 from djcp_alarm_ai.errors import AnswerGenerationError
-from djcp_alarm_ai.schemas import AnalysisAnswer, AnalysisContext, CauseCandidate
+from djcp_alarm_ai.schemas import AnalysisAnswer, AnalysisContext
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +28,7 @@ class RuleBasedAnswerGenerator:
         knowledge = context.tag_knowledge
         unit = context.tag.unit
         warnings: list[str] = []
-        causes: list[CauseCandidate] = []
+        causes: list[str] = []
         checks: list[str] = []
         actions: list[str] = []
 
@@ -45,21 +47,9 @@ class RuleBasedAnswerGenerator:
 
         if knowledge:
             if knowledge.value_change_meaning:
-                causes.append(
-                    CauseCandidate(
-                        cause=knowledge.value_change_meaning,
-                        confidence="MEDIUM",
-                        basis="TAG_DESCRIPTION",
-                    )
-                )
+                causes.append(knowledge.value_change_meaning)
             if knowledge.tag_description:
-                causes.append(
-                    CauseCandidate(
-                        cause=knowledge.tag_description,
-                        confidence="LOW",
-                        basis="TAG_DESCRIPTION",
-                    )
-                )
+                causes.append(knowledge.tag_description)
             checks = _split_guidance(knowledge.key_check_points)
             actions = _split_guidance(knowledge.action_guidance)
             if knowledge.failure_guidance:
@@ -67,13 +57,7 @@ class RuleBasedAnswerGenerator:
             if not knowledge.is_verified:
                 warnings.append("현재 태그 설명은 미검증 초기 지식입니다.")
         else:
-            causes.append(
-                CauseCandidate(
-                    cause="등록된 상세 태그 설명이 없어 운영 데이터만으로 원인을 확정할 수 없습니다.",
-                    confidence="LOW",
-                    basis="INFERENCE",
-                )
-            )
+            causes.append("등록된 상세 태그 설명이 없어 운영 데이터만으로 원인을 확정할 수 없습니다.")
             checks.append("태그 측정값, 설정값, 센서 상태와 현장 설비 상태를 확인하세요.")
             warnings.append("이 태그에 연결된 상세 description이 없습니다.")
 
@@ -101,7 +85,7 @@ class OpenAICompatibleAnswerGenerator:
 
     def generate(self, context: AnalysisContext) -> AnalysisAnswer:
         system_prompt = (self.prompt_dir / "system.md").read_text(encoding="utf-8")
-        context_json = _build_context_payload(context)
+        context_json = _build_context_payload(context, no_think_question=True)
 
         content = self._request_answer_content(
             system_prompt,
@@ -109,36 +93,20 @@ class OpenAICompatibleAnswerGenerator:
         )
         try:
             return _parse_answer_content(content)
-        except (TypeError, ValueError, ValidationError) as first_exc:
+        except (TypeError, ValueError, ValidationError) as exc:
             logger.warning(
-                "LLM answer validation failed; retrying with /no_think: %s; "
-                "content preview=%r",
-                first_exc,
+                "LLM /no_think answer validation failed: %s; content preview=%r",
+                exc,
                 content[:1000],
             )
-
-        retry_content = self._request_answer_content(
-            system_prompt,
-            _build_context_payload(context, no_think_question=True),
-        )
-        try:
-            answer = _parse_answer_content(retry_content)
-        except (TypeError, ValueError, ValidationError) as retry_exc:
-            logger.warning(
-                "LLM /no_think retry validation failed: %s; content preview=%r",
-                retry_exc,
-                retry_content[:1000],
-            )
-            raise AnswerGenerationError("LLM answer validation failed") from retry_exc
-
-        logger.info("LLM /no_think retry succeeded")
-        return answer
+            raise AnswerGenerationError("LLM answer validation failed") from exc
 
     def _request_answer_content(
         self,
         system_prompt: str,
         user_content: str,
     ) -> str:
+        started = perf_counter()
         try:
             response = self.client.chat.completions.create(
                 model=self.settings.llm_model,
@@ -159,8 +127,12 @@ class OpenAICompatibleAnswerGenerator:
                     },
                 },
             )
+            elapsed_seconds = perf_counter() - started
+            print(f"LLM response time: {elapsed_seconds:.3f}s", file=sys.stderr)
             return response.choices[0].message.content or ""
         except (OpenAIError, IndexError) as exc:
+            elapsed_seconds = perf_counter() - started
+            print(f"LLM response failed after: {elapsed_seconds:.3f}s", file=sys.stderr)
             logger.exception("LLM answer request failed")
             raise AnswerGenerationError("LLM answer generation failed") from exc
 
@@ -245,22 +217,34 @@ def _normalize_answer_payload(payload: object) -> object:
 
     normalized = dict(payload)
     for key in ("likely_causes", "checks", "actions", "warnings"):
-        if normalized.get(key) is None:
-            normalized[key] = []
+        normalized[key] = _normalize_string_list(normalized.get(key), key=key)
 
-    causes = normalized.get("likely_causes")
-    if isinstance(causes, list):
-        normalized["likely_causes"] = [_normalize_cause_payload(cause) for cause in causes]
     return normalized
 
 
-def _normalize_cause_payload(payload: object) -> object:
-    if not isinstance(payload, dict):
-        return payload
+def _normalize_string_list(value: object, *, key: str) -> list[str]:
+    if value is None:
+        return []
+    items = value if isinstance(value, list) else [value]
 
-    normalized = dict(payload)
-    for key in ("confidence", "basis"):
-        value = normalized.get(key)
-        if isinstance(value, str):
-            normalized[key] = value.strip().upper().replace(" ", "_")
+    normalized: list[str] = []
+    for item in items:
+        text = _normalize_string_item(item, key=key)
+        if text:
+            normalized.append(text)
     return normalized
+
+
+def _normalize_string_item(item: object, *, key: str) -> str:
+    if isinstance(item, str):
+        return item.strip()
+    if isinstance(item, dict):
+        for candidate_key in ("cause", "text", "description", "message"):
+            value = item.get(candidate_key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+        if key == "likely_causes":
+            value = item.get("summary")
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+    return ""

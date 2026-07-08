@@ -379,6 +379,7 @@ ollama run qwen3.5:9b "/no_think 한국어로 한 문장만 답해줘: 정상 �
 ## 10. LLM 모드 API 테스트
 
 DB-only 테스트와 LLM smoke test가 모두 성공한 뒤 LLM 모드로 API를 실행합니다.
+API에서 LLM을 호출할 때는 Qwen thinking 출력을 줄이기 위해 질문 앞에 `/no_think`를 자동으로 붙입니다.
 
 ```bash
 .venv/bin/uvicorn djcp_alarm_ai.main:app --reload
@@ -399,11 +400,7 @@ curl -s -X POST http://localhost:8000/v2/analyses/from-tag \
 {
   "summary": "요약 문장",
   "likely_causes": [
-    {
-      "cause": "가능 원인",
-      "confidence": "HIGH",
-      "basis": "TAG_DESCRIPTION"
-    }
+    "가능 원인"
   ],
   "checks": [
     "점검 항목"
