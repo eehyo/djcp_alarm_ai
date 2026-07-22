@@ -1,11 +1,6 @@
 from functools import lru_cache
-from pathlib import Path
-
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
-
-
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 
 class Settings(BaseSettings):
@@ -25,7 +20,6 @@ class Settings(BaseSettings):
         validation_alias="RECENT_MAINTENANCE_LIMIT",
     )
     related_tag_limit: int = Field(default=20, validation_alias="RELATED_TAG_LIMIT")
-    description_path: Path = PROJECT_ROOT / "data" / "tag_descriptions.json"
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 

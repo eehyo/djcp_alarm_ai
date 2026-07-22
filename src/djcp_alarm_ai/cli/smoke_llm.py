@@ -1,6 +1,5 @@
 import json
 from datetime import datetime, timezone
-from decimal import Decimal
 
 from djcp_alarm_ai.config import get_settings
 from djcp_alarm_ai.errors import AnswerGenerationError
@@ -23,32 +22,35 @@ def main() -> None:
     context = AnalysisContext(
         question="이 알람이 발생한 가능한 원인과 점검 순서를 알려줘.",
         alarm=AlarmInfo(
-            id=1,
-            tag_id=10010002,
-            start_time=datetime.now(timezone.utc),
-            value=Decimal("12.4"),
-            setpoint=Decimal("10.0"),
-            severity="High",
-            state="발생",
+            tag_id=10011217,
+            tag_name="BBAIT-801",
+            timestamp=datetime.now(timezone.utc),
+            priority=1,
+            value=12.4,
+            is_alm=1,
+            message="연소가스 산소농도 알람",
         ),
         tag=TagInfo(
-            id=10010002,
-            asset_id=42,
+            tag_id=10011217,
             tag_name="BBAIT-801",
             description="연소가스 산소 농도",
-            unit="%",
-            alarm_high=Decimal("10.0"),
-            current_value=Decimal("12.4"),
+            display_name="연소가스 산소농도",
+            sig_type="AI",
+            system="BOILER",
+            eng_unit="%",
+            hi_alm_val=10.0,
         ),
         asset=AssetInfo(
-            id=42,
-            code="BLR-001",
-            name="1호기 보일러",
-            asset_type="Boiler",
+            id=13,
+            parent_id=12,
+            code="ASSET-002",
+            name="Main Boiler 1호기",
+            status="정상",
+            criticality="Medium",
         ),
         tag_knowledge=TagKnowledge(
-            tag_id=10010002,
-            tag_name_snapshot="BBAIT-801",
+            tag_id=10011217,
+            tag_name="BBAIT-801",
             description="연소가스 산소 농도",
             value_change_meaning="상승 시 과잉 공기 유입 또는 부하 증가 가능성이 있습니다.",
             key_check_points="송풍기 상태, 분석기 오염, DCS 제어 모드를 확인합니다.",

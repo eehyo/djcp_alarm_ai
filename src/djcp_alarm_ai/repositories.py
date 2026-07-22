@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
@@ -8,134 +10,195 @@ from djcp_alarm_ai.schemas import (
     AssetInfo,
     AssetPathItem,
     MaintenanceInfo,
-    RecentAlarm,
+    MimicInfo,
     RelatedTag,
+    RelatedTagReference,
+    SopInfo,
     TagCandidate,
     TagInfo,
     TagKnowledge,
 )
 
 
-ALARM_CONTEXT_SQL = text(
+RECENT_ALARMS_SQL = text(
     """
     SELECT
-        a.id AS alarm_id,
-        a.tag_id,
-        a.start_time,
-        a.end_time,
-        a.value,
-        a.setpoint,
-        a.severity,
-        a.state,
-        a.ack_by,
-        t.id AS resolved_tag_id,
-        t.asset_id,
-        t.tag_name,
-        t.description AS tag_description,
-        t.unit,
-        t.alarm_high,
-        t.alarm_low,
-        t.current_value,
-        t.last_updated_at,
-        s.id AS asset_id,
-        s.parent_id AS asset_parent_id,
-        s.code AS asset_code,
-        s.name AS asset_name,
-        s.asset_type,
-        s.system_name,
-        s.location,
-        s.criticality,
-        s.description AS asset_description
-    FROM alarm a
-    JOIN tag t ON t.id = a.tag_id
-    JOIN asset s ON s.id = t.asset_id
-    WHERE a.id = :alarm_id
+        av."TIMESTAMP" AS timestamp,
+        av."TAG_ID" AS tag_id,
+        av."TAG_NAME" AS tag_name,
+        av."DESCRIPTION" AS description,
+        av."PRIORITY" AS priority,
+        av."VALUE" AS value,
+        av."IS_ALM" AS is_alm,
+        av."MESSAGE" AS message,
+        av."IS_ACK" AS is_ack,
+        av."ACK_TIME" AS ack_time
+    FROM test."ALARM_VALUE" av
+    ORDER BY av."TIMESTAMP" DESC, av."TAG_ID"
+    LIMIT :limit
+    """
+)
+
+RECENT_ALARM_CONTEXT_SQL = text(
+    """
+    SELECT
+        av."TIMESTAMP" AS alarm_timestamp,
+        av."TAG_ID" AS alarm_tag_id,
+        av."TAG_NAME" AS alarm_tag_name,
+        av."DESCRIPTION" AS alarm_description,
+        av."PRIORITY" AS alarm_priority,
+        av."VALUE" AS alarm_value,
+        av."IS_ALM" AS alarm_is_alm,
+        av."MESSAGE" AS alarm_message,
+        av."IS_ACK" AS alarm_is_ack,
+        av."ACK_TIME" AS alarm_ack_time,
+        ti."TAG_ID" AS tag_id,
+        ti."TAG_NAME" AS tag_name,
+        ti."DESCRIPTION" AS description,
+        tie."DISPLAY_NAME" AS display_name,
+        tie."TAG_TYPE_CODE" AS tag_type_code,
+        ti."SIG_TYPE" AS sig_type,
+        ti."SYSTEM" AS system,
+        ti."ENG_UNIT" AS eng_unit,
+        ti."L_ENGVAL" AS l_engval,
+        ti."H_ENGVAL" AS h_engval,
+        NULLIF(BTRIM(ti."ALARM"), '') AS alarm,
+        ti."LL_ALM_VAL" AS ll_alm_val,
+        ti."LO_ALM_VAL" AS lo_alm_val,
+        ti."HI_ALM_VAL" AS hi_alm_val,
+        ti."HH_ALM_VAL" AS hh_alm_val,
+        ti."LL_ALM_PRIO" AS ll_alm_prio,
+        ti."LO_ALM_PRIO" AS lo_alm_prio,
+        ti."HI_ALM_PRIO" AS hi_alm_prio,
+        ti."HH_ALM_PRIO" AS hh_alm_prio,
+        ti."D_ALM_PRIO1" AS d_alm_prio1,
+        ti."D_ALM_PRIO2" AS d_alm_prio2,
+        ti."ALM_CND" AS alm_cnd,
+        ti."CLSD_MSG" AS clsd_msg,
+        ti."OPEN_MSG" AS open_msg,
+        NULLIF(BTRIM(ti."USED"), '') AS used
+    FROM test."ALARM_VALUE" av
+    JOIN test."TAG_INFO" ti ON ti."TAG_ID" = av."TAG_ID"
+    LEFT JOIN test."TAG_INFO_EXT" tie ON tie."TAG_ID" = ti."TAG_ID"
+    WHERE av."TAG_ID" = :tag_id
+      AND av."TIMESTAMP" = :timestamp
+    """
+)
+
+HISTORY_ALARM_CONTEXT_SQL = text(
+    """
+    SELECT
+        ah."TIMESTAMP" AS alarm_timestamp,
+        ah."TAG_ID" AS alarm_tag_id,
+        ah."TAG_NAME" AS alarm_tag_name,
+        ah."DESCRIPTION" AS alarm_description,
+        ah."PRIORITY" AS alarm_priority,
+        ah."VALUE" AS alarm_value,
+        ah."IS_ALM" AS alarm_is_alm,
+        ah."MESSAGE" AS alarm_message,
+        NULL::smallint AS alarm_is_ack,
+        NULL::timestamptz AS alarm_ack_time,
+        ti."TAG_ID" AS tag_id,
+        ti."TAG_NAME" AS tag_name,
+        ti."DESCRIPTION" AS description,
+        tie."DISPLAY_NAME" AS display_name,
+        tie."TAG_TYPE_CODE" AS tag_type_code,
+        ti."SIG_TYPE" AS sig_type,
+        ti."SYSTEM" AS system,
+        ti."ENG_UNIT" AS eng_unit,
+        ti."L_ENGVAL" AS l_engval,
+        ti."H_ENGVAL" AS h_engval,
+        NULLIF(BTRIM(ti."ALARM"), '') AS alarm,
+        ti."LL_ALM_VAL" AS ll_alm_val,
+        ti."LO_ALM_VAL" AS lo_alm_val,
+        ti."HI_ALM_VAL" AS hi_alm_val,
+        ti."HH_ALM_VAL" AS hh_alm_val,
+        ti."LL_ALM_PRIO" AS ll_alm_prio,
+        ti."LO_ALM_PRIO" AS lo_alm_prio,
+        ti."HI_ALM_PRIO" AS hi_alm_prio,
+        ti."HH_ALM_PRIO" AS hh_alm_prio,
+        ti."D_ALM_PRIO1" AS d_alm_prio1,
+        ti."D_ALM_PRIO2" AS d_alm_prio2,
+        ti."ALM_CND" AS alm_cnd,
+        ti."CLSD_MSG" AS clsd_msg,
+        ti."OPEN_MSG" AS open_msg,
+        NULLIF(BTRIM(ti."USED"), '') AS used
+    FROM test."ALARM_HIST" ah
+    JOIN test."TAG_INFO" ti ON ti."TAG_ID" = ah."TAG_ID"
+    LEFT JOIN test."TAG_INFO_EXT" tie ON tie."TAG_ID" = ti."TAG_ID"
+    WHERE ah."TAG_ID" = :tag_id
+      AND ah."TIMESTAMP" = :timestamp
+    ORDER BY ah."PRIORITY", ah."IS_ALM", ah."MESSAGE"
+    LIMIT 1
     """
 )
 
 TAG_CONTEXT_SQL = text(
     """
     SELECT
-        t.id AS resolved_tag_id,
-        t.asset_id,
-        t.tag_name,
-        t.description AS tag_description,
-        t.unit,
-        t.alarm_high,
-        t.alarm_low,
-        t.current_value,
-        t.last_updated_at,
-        s.id AS asset_id,
-        s.parent_id AS asset_parent_id,
-        s.code AS asset_code,
-        s.name AS asset_name,
-        s.asset_type,
-        s.system_name,
-        s.location,
-        s.criticality,
-        s.description AS asset_description
-    FROM tag t
-    JOIN asset s ON s.id = t.asset_id
-    WHERE t.id = :tag_id
+        ti."TAG_ID" AS tag_id,
+        ti."TAG_NAME" AS tag_name,
+        ti."DESCRIPTION" AS description,
+        tie."DISPLAY_NAME" AS display_name,
+        tie."TAG_TYPE_CODE" AS tag_type_code,
+        ti."SIG_TYPE" AS sig_type,
+        ti."SYSTEM" AS system,
+        ti."ENG_UNIT" AS eng_unit,
+        ti."L_ENGVAL" AS l_engval,
+        ti."H_ENGVAL" AS h_engval,
+        NULLIF(BTRIM(ti."ALARM"), '') AS alarm,
+        ti."LL_ALM_VAL" AS ll_alm_val,
+        ti."LO_ALM_VAL" AS lo_alm_val,
+        ti."HI_ALM_VAL" AS hi_alm_val,
+        ti."HH_ALM_VAL" AS hh_alm_val,
+        ti."LL_ALM_PRIO" AS ll_alm_prio,
+        ti."LO_ALM_PRIO" AS lo_alm_prio,
+        ti."HI_ALM_PRIO" AS hi_alm_prio,
+        ti."HH_ALM_PRIO" AS hh_alm_prio,
+        ti."D_ALM_PRIO1" AS d_alm_prio1,
+        ti."D_ALM_PRIO2" AS d_alm_prio2,
+        ti."ALM_CND" AS alm_cnd,
+        ti."CLSD_MSG" AS clsd_msg,
+        ti."OPEN_MSG" AS open_msg,
+        NULLIF(BTRIM(ti."USED"), '') AS used
+    FROM test."TAG_INFO" ti
+    LEFT JOIN test."TAG_INFO_EXT" tie ON tie."TAG_ID" = ti."TAG_ID"
+    WHERE ti."TAG_ID" = :tag_id
     """
 )
 
 TAG_CANDIDATES_SQL = text(
     """
     SELECT
-        t.id AS tag_id,
-        t.tag_name,
-        t.asset_id,
-        s.name AS asset_name,
-        s.code AS asset_code
-    FROM tag t
-    JOIN asset s ON s.id = t.asset_id
-    WHERE t.tag_name = :tag_name
-      AND (CAST(:asset_id AS BIGINT) IS NULL OR t.asset_id = CAST(:asset_id AS BIGINT))
-    ORDER BY t.id
+        ti."TAG_ID" AS tag_id,
+        ti."TAG_NAME" AS tag_name,
+        ti."DESCRIPTION" AS description,
+        ti."SYSTEM" AS system,
+        tie."DISPLAY_NAME" AS display_name
+    FROM test."TAG_INFO" ti
+    LEFT JOIN test."TAG_INFO_EXT" tie ON tie."TAG_ID" = ti."TAG_ID"
+    WHERE ti."TAG_NAME" = :tag_name
+    ORDER BY ti."TAG_ID"
     """
 )
 
-RECENT_ALARMS_SQL = text(
+TAG_ASSETS_SQL = text(
     """
     SELECT
         a.id,
-        a.tag_id,
-        a.start_time,
-        a.end_time,
-        a.value,
-        a.setpoint,
-        a.severity,
-        a.state,
-        a.ack_by
-    FROM alarm a
-    WHERE a.tag_id = :tag_id
-      AND (CAST(:exclude_alarm_id AS BIGINT) IS NULL OR a.id <> CAST(:exclude_alarm_id AS BIGINT))
-    ORDER BY a.start_time DESC
-    LIMIT :limit
-    """
-)
-
-RECENT_MAINTENANCE_SQL = text(
-    """
-    SELECT
-        m.id,
-        m.asset_id,
-        m.work_name,
-        m.maint_type,
-        m.priority,
-        m.plan_start_dt,
-        m.plan_end_dt,
-        m.actual_end_dt,
-        m.owner,
-        m.owner_dept,
-        m.status,
-        m.inspection_result,
-        m.notes
-    FROM maintenance m
-    WHERE m.asset_id = :asset_id
-    ORDER BY COALESCE(m.actual_end_dt, m.plan_start_dt, m.created_at) DESC
-    LIMIT :limit
+        a.parent_id,
+        a.code,
+        a.name,
+        a.asset_type,
+        a.status,
+        a.criticality,
+        a.system_name,
+        a.location,
+        a.description
+    FROM test.asset_tag_link atl
+    JOIN test.asset a ON a.id = atl.asset_id
+    WHERE atl.tag_id = :tag_id
+    ORDER BY a.id
     """
 )
 
@@ -150,7 +213,7 @@ ASSET_PATH_SQL = text(
             a.asset_type,
             0 AS depth,
             ARRAY[a.id] AS visited_ids
-        FROM asset a
+        FROM test.asset a
         WHERE a.id = :asset_id
 
         UNION ALL
@@ -163,7 +226,7 @@ ASSET_PATH_SQL = text(
             parent.asset_type,
             child.depth + 1,
             child.visited_ids || parent.id
-        FROM asset parent
+        FROM test.asset parent
         JOIN asset_path child ON child.parent_id = parent.id
         WHERE NOT parent.id = ANY(child.visited_ids)
     )
@@ -173,20 +236,69 @@ ASSET_PATH_SQL = text(
     """
 )
 
-RELATED_TAGS_SQL = text(
+RECENT_MAINTENANCE_SQL = text(
     """
     SELECT
-        t.id,
-        t.tag_name,
-        t.description,
-        t.unit,
-        t.current_value,
-        t.last_updated_at
-    FROM tag t
-    WHERE t.asset_id = :asset_id
-      AND t.id <> :tag_id
-    ORDER BY t.tag_name
+        m.id,
+        m.work_code,
+        m.asset_id,
+        m.work_name,
+        m.maint_type,
+        m.priority,
+        m.worker,
+        m.scheduled_at,
+        m.duration_minutes,
+        m.completed_at,
+        m.status,
+        m.cost,
+        m.inspection_result,
+        m.next_due_date,
+        m.confirmer,
+        m.work_description,
+        m.team_note
+    FROM test.maintenance m
+    WHERE m.asset_id = :asset_id
+    ORDER BY COALESCE(m.completed_at, m.scheduled_at, m.created_at) DESC
     LIMIT :limit
+    """
+)
+
+RECENT_HISTORY_SQL = text(
+    """
+    SELECT
+        ah."TIMESTAMP" AS timestamp,
+        ah."TAG_ID" AS tag_id,
+        ah."TAG_NAME" AS tag_name,
+        ah."DESCRIPTION" AS description,
+        ah."PRIORITY" AS priority,
+        ah."VALUE" AS value,
+        ah."IS_ALM" AS is_alm,
+        ah."MESSAGE" AS message,
+        NULL::smallint AS is_ack,
+        NULL::timestamptz AS ack_time
+    FROM test."ALARM_HIST" ah
+    WHERE ah."TAG_ID" = :tag_id
+      AND (
+        CAST(:selected_timestamp AS timestamptz) IS NULL
+        OR ah."TIMESTAMP" <> CAST(:selected_timestamp AS timestamptz)
+      )
+    ORDER BY ah."TIMESTAMP" DESC
+    LIMIT :limit
+    """
+)
+
+MIMIC_SQL = text(
+    """
+    SELECT
+        mf."FILE_PATH" AS file_path,
+        mf."FILE_SIZE" AS file_size,
+        mf."LAST_WRITE_TICKS" AS last_write_ticks,
+        mf."CHG_DATE" AS chg_date,
+        mf."CHG_ID" AS chg_id
+    FROM test."MIMIC_FILE_TAG" mft
+    JOIN test."MIMIC_FILE" mf ON mf."FILE_PATH" = mft."FILE_PATH"
+    WHERE mft."TAG_NAME" = :tag_name
+    ORDER BY mf."FILE_PATH"
     """
 )
 
@@ -194,7 +306,7 @@ TAG_KNOWLEDGE_SQL = text(
     """
     SELECT
         d.tag_id,
-        d.tag_name_snapshot,
+        d.tag_name,
         d.description,
         d.tag_nm,
         d.tag_rmk,
@@ -205,9 +317,51 @@ TAG_KNOWLEDGE_SQL = text(
         d.key_check_points,
         d.action_guidance,
         d.failure_guidance,
-        d.is_verified
-    FROM ai.tag_description d
+        d.related_tags,
+        d.sop_tag_name
+    FROM test.tag_description d
     WHERE d.tag_id = :tag_id
+    """
+)
+
+SOP_SQL = text(
+    """
+    SELECT
+        s.tag_id,
+        s.tag_name,
+        s.description,
+        s.system_name,
+        s.kind,
+        s.scenarios,
+        s.content,
+        s.embedding_model
+    FROM test.sop_document s
+    WHERE s.tag_id = :tag_id
+       OR (
+            CAST(:sop_tag_name AS varchar) IS NOT NULL
+        AND s.tag_name = CAST(:sop_tag_name AS varchar)
+       )
+    ORDER BY
+        CASE WHEN s.tag_id = :tag_id THEN 0 ELSE 1 END,
+        s.id
+    LIMIT 1
+    """
+)
+
+RELATED_TAGS_SQL = text(
+    """
+    SELECT
+        ti."TAG_ID" AS tag_id,
+        ti."TAG_NAME" AS tag_name,
+        ti."DESCRIPTION" AS description,
+        tie."DISPLAY_NAME" AS display_name,
+        tie."TAG_TYPE_CODE" AS tag_type_code,
+        ti."SIG_TYPE" AS sig_type,
+        ti."ENG_UNIT" AS eng_unit
+    FROM test."TAG_INFO" ti
+    LEFT JOIN test."TAG_INFO_EXT" tie ON tie."TAG_ID" = ti."TAG_ID"
+    WHERE ti."TAG_NAME" = ANY(CAST(:tag_names AS varchar[]))
+    ORDER BY ti."TAG_NAME", ti."TAG_ID"
     """
 )
 
@@ -217,98 +371,97 @@ class OperationalRepository:
         self.db = db
         self.settings = settings or get_settings()
 
-    def find_tag_candidates(self, tag_name: str, asset_id: int | None) -> list[TagCandidate]:
+    def list_recent_alarms(self) -> list[AlarmInfo]:
         rows = self.db.execute(
-            TAG_CANDIDATES_SQL,
-            {"tag_name": tag_name, "asset_id": asset_id},
+            RECENT_ALARMS_SQL,
+            {"limit": self.settings.recent_alarm_limit},
         ).mappings()
+        return [AlarmInfo.model_validate(row) for row in rows]
+
+    def find_tag_candidates(self, tag_name: str) -> list[TagCandidate]:
+        rows = self.db.execute(TAG_CANDIDATES_SQL, {"tag_name": tag_name}).mappings()
         return [TagCandidate.model_validate(row) for row in rows]
 
-    def load_from_alarm(self, alarm_id: int, question: str) -> AnalysisContext | None:
-        row = self.db.execute(ALARM_CONTEXT_SQL, {"alarm_id": alarm_id}).mappings().one_or_none()
-        if row is None:
-            return None
-        return self._build_context(row, question=question, alarm_id=alarm_id)
+    def load_from_recent_alarm(
+        self,
+        tag_id: int,
+        timestamp: datetime,
+        question: str,
+    ) -> AnalysisContext | None:
+        row = self.db.execute(
+            RECENT_ALARM_CONTEXT_SQL,
+            {"tag_id": tag_id, "timestamp": timestamp},
+        ).mappings().one_or_none()
+        return self._build_context(row, question=question) if row else None
+
+    def load_from_history(
+        self,
+        tag_id: int,
+        timestamp: datetime,
+        question: str,
+    ) -> AnalysisContext | None:
+        row = self.db.execute(
+            HISTORY_ALARM_CONTEXT_SQL,
+            {"tag_id": tag_id, "timestamp": timestamp},
+        ).mappings().one_or_none()
+        return self._build_context(row, question=question) if row else None
 
     def load_from_tag(self, tag_id: int, question: str) -> AnalysisContext | None:
         row = self.db.execute(TAG_CONTEXT_SQL, {"tag_id": tag_id}).mappings().one_or_none()
-        if row is None:
-            return None
-        return self._build_context(row, question=question, alarm_id=None)
+        return self._build_context(row, question=question) if row else None
 
-    def _build_context(self, row, *, question: str, alarm_id: int | None) -> AnalysisContext:
-        tag_id = row["resolved_tag_id"]
-        asset_id = row["asset_id"]
-        alarm = None
-        if alarm_id is not None:
-            alarm = AlarmInfo(
-                id=row["alarm_id"],
-                tag_id=row["tag_id"],
-                start_time=row["start_time"],
-                end_time=row["end_time"],
-                value=row["value"],
-                setpoint=row["setpoint"],
-                severity=row["severity"],
-                state=row["state"],
-                ack_by=row["ack_by"],
-            )
+    def _build_context(self, row, *, question: str) -> AnalysisContext:
+        tag = TagInfo.model_validate(row)
+        alarm = _alarm_from_context_row(row)
 
-        tag = TagInfo(
-            id=tag_id,
-            asset_id=row["asset_id"],
-            tag_name=row["tag_name"],
-            description=row["tag_description"],
-            unit=row["unit"],
-            alarm_high=row["alarm_high"],
-            alarm_low=row["alarm_low"],
-            current_value=row["current_value"],
-            last_updated_at=row["last_updated_at"],
-        )
-        asset = AssetInfo(
-            id=asset_id,
-            parent_id=row["asset_parent_id"],
-            code=row["asset_code"],
-            name=row["asset_name"],
-            asset_type=row["asset_type"],
-            system_name=row["system_name"],
-            location=row["location"],
-            criticality=row["criticality"],
-            description=row["asset_description"],
-        )
+        asset_rows = list(self.db.execute(TAG_ASSETS_SQL, {"tag_id": tag.tag_id}).mappings())
+        asset = AssetInfo.model_validate(asset_rows[0]) if asset_rows else None
+        asset_path: list[AssetPathItem] = []
+        maintenance: list[MaintenanceInfo] = []
+        if asset is not None:
+            asset_path = [
+                AssetPathItem.model_validate(item)
+                for item in self.db.execute(
+                    ASSET_PATH_SQL,
+                    {"asset_id": asset.id},
+                ).mappings()
+            ]
+            maintenance = [
+                MaintenanceInfo.model_validate(item)
+                for item in self.db.execute(
+                    RECENT_MAINTENANCE_SQL,
+                    {
+                        "asset_id": asset.id,
+                        "limit": self.settings.recent_maintenance_limit,
+                    },
+                ).mappings()
+            ]
 
-        recent_alarm_rows = self.db.execute(
-            RECENT_ALARMS_SQL,
-            {
-                "tag_id": tag_id,
-                "exclude_alarm_id": alarm_id,
-                "limit": self.settings.recent_alarm_limit,
-            },
-        ).mappings()
-        maintenance_rows = self.db.execute(
-            RECENT_MAINTENANCE_SQL,
-            {"asset_id": asset_id, "limit": self.settings.recent_maintenance_limit},
-        ).mappings()
-        path_rows = self.db.execute(ASSET_PATH_SQL, {"asset_id": asset_id}).mappings()
-        related_tag_rows = self.db.execute(
-            RELATED_TAGS_SQL,
-            {
-                "asset_id": asset_id,
-                "tag_id": tag_id,
-                "limit": self.settings.related_tag_limit,
-            },
-        ).mappings()
+        history = [
+            AlarmInfo.model_validate(item)
+            for item in self.db.execute(
+                RECENT_HISTORY_SQL,
+                {
+                    "tag_id": tag.tag_id,
+                    "selected_timestamp": alarm.timestamp if alarm else None,
+                    "limit": self.settings.recent_alarm_limit,
+                },
+            ).mappings()
+        ]
+        mimic = [
+            MimicInfo.model_validate(item)
+            for item in self.db.execute(MIMIC_SQL, {"tag_name": tag.tag_name}).mappings()
+        ]
 
         return AnalysisContext(
             question=question,
             alarm=alarm,
             tag=tag,
             asset=asset,
-            asset_path=[AssetPathItem.model_validate(item) for item in path_rows],
-            recent_alarms=[RecentAlarm.model_validate(item) for item in recent_alarm_rows],
-            recent_maintenance=[
-                MaintenanceInfo.model_validate(item) for item in maintenance_rows
-            ],
-            related_tags=[RelatedTag.model_validate(item) for item in related_tag_rows],
+            asset_path=asset_path,
+            recent_alarms=history,
+            recent_maintenance=maintenance,
+            mimic=mimic,
         )
 
 
@@ -318,4 +471,70 @@ class DescriptionRepository:
 
     def get_by_tag_id(self, tag_id: int) -> TagKnowledge | None:
         row = self.db.execute(TAG_KNOWLEDGE_SQL, {"tag_id": tag_id}).mappings().one_or_none()
-        return TagKnowledge.model_validate(row) if row else None
+        if row is None:
+            return None
+        payload = dict(row)
+        payload["related_tags"] = payload.get("related_tags") or []
+        return TagKnowledge.model_validate(payload)
+
+    def get_sop(
+        self,
+        tag_id: int,
+        sop_tag_name: str | None = None,
+    ) -> SopInfo | None:
+        row = self.db.execute(
+            SOP_SQL,
+            {"tag_id": tag_id, "sop_tag_name": sop_tag_name},
+        ).mappings().one_or_none()
+        if row is None:
+            return None
+        payload = dict(row)
+        payload["scenarios"] = payload.get("scenarios") or []
+        return SopInfo.model_validate(payload)
+
+    def resolve_related_tags(
+        self,
+        references: list[RelatedTagReference],
+        *,
+        limit: int,
+    ) -> list[RelatedTag]:
+        references = references[:limit]
+        if not references:
+            return []
+
+        rows = self.db.execute(
+            RELATED_TAGS_SQL,
+            {"tag_names": [reference.tag_name for reference in references]},
+        ).mappings()
+        resolved_by_name = {
+            str(row["tag_name"]): RelatedTag.model_validate(row)
+            for row in rows
+        }
+        return [
+            resolved_by_name.get(
+                reference.tag_name,
+                RelatedTag(
+                    tag_name=reference.tag_name,
+                    description=reference.description,
+                ),
+            )
+            for reference in references
+        ]
+
+
+def _alarm_from_context_row(row) -> AlarmInfo | None:
+    timestamp = row.get("alarm_timestamp")
+    if timestamp is None:
+        return None
+    return AlarmInfo(
+        timestamp=timestamp,
+        tag_id=row["alarm_tag_id"],
+        tag_name=row["alarm_tag_name"],
+        description=row["alarm_description"],
+        priority=row["alarm_priority"],
+        value=row["alarm_value"],
+        is_alm=row["alarm_is_alm"],
+        message=row["alarm_message"],
+        is_ack=row["alarm_is_ack"],
+        ack_time=row["alarm_ack_time"],
+    )

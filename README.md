@@ -1,150 +1,53 @@
 # DJCP Alarm AI
 
-PostgreSQL에 저장된 실제 `alarm`, `tag`, `asset` 데이터를 기준으로 발전소 알람과
-태그 상태를 설명하는 FastAPI 백엔드입니다. 태그별 설명 지식은
-`data/tag_descriptions.json`에서 읽어 `ai.tag_description` 테이블에 저장합니다.
+대전열병합 테스트 PostgreSQL의 `test` 스키마를 조회하여 알람과 태그 상태를
+설명하는 FastAPI 백엔드입니다.
 
-API는 다음 순서로 데이터를 찾습니다.
-
-```text
-alarm.id
--> alarm.tag_id = tag.id
--> tag.asset_id = asset.id
--> ai.tag_description.tag_id = tag.id
--> 응답 생성
-```
-
-태그명으로 질문할 때는 먼저 `tag.tag_name`으로 실제 `tag.id`를 찾습니다. 같은
-`tag_name`이 여러 설비에 있으면 API 요청에 `asset_id`를 같이 넣어야 합니다.
-
-> `data/tag_descriptions.json`의 내용은 초기 설명 지식입니다. 운영에 사용하기 전에는
-> 발전소 운전/정비/계측 전문가가 태그 설명, 점검 항목, 조치 가이드, 장애 가이드를
-> 검수해야 하며, 검수 결과에 따라 JSON 내용을 추가/수정/삭제한 뒤 다시 동기화해야
-> 합니다. 검수 전 description은 참고용 지식으로만 사용합니다.
-
-## 전체 실행 순서
-
-처음 이 코드를 받은 사람은 아래 순서대로 진행하면 됩니다.
+## 데이터 흐름
 
 ```text
-1. PostgreSQL 설치 및 실행
-2. Python 가상환경 생성 및 패키지 설치
-3. .env 파일 생성
-4. PostgreSQL 데이터베이스와 테이블 생성
-5. 데모 운영 데이터 적재
-6. Description JSON 태그 생성 및 동기화
-7. DB-only 모드로 API 먼저 테스트
-8. Ollama/Qwen 설치 및 LLM 테스트
-9. LLM 모드로 API 테스트
+ALARM_VALUE 또는 ALARM_HIST
+  -> TAG_INFO + TAG_INFO_EXT
+  -> tag_description
+  -> asset_tag_link -> asset -> maintenance
+  -> sop_document (데이터가 있을 때)
+  -> MIMIC_FILE_TAG -> MIMIC_FILE
+  -> LLM 답변 생성
 ```
 
-DB-only 모드는 Qwen을 사용하지 않고 DB 연결과 Description 매핑만 확인하는 방식입니다.
-먼저 DB-only 테스트가 성공한 뒤 Qwen을 붙이면 문제 원인을 나누어 확인하기 쉽습니다.
+- `TAG_INFO.TAG_ID`가 전체 연결의 기준 키입니다.
+- 최근 알람은 `ALARM_VALUE`의 PK인 `TIMESTAMP + TAG_ID`로 선택합니다.
+- 과거 알람은 `ALARM_HIST`에서 같은 키로 조회합니다.
+- `TAG_NAME`은 태그 검색, 관련 태그, Mimic 연결에만 사용합니다.
+- Mimic 경로는 API 응답에 포함하지만 LLM 판단 근거로 전달하지 않습니다.
+- SOP는 `tag_id`를 우선 사용하고, 없으면
+  `tag_description.sop_tag_name = sop_document.tag_name`으로 조회합니다.
+  현재 데이터가 없으면 생략합니다.
 
-## 현재 폴더 구조
+실제 원격 스키마 계약은 `test_schema.sql`, 전달 자료는 `data/lab_handover/`에 있습니다.
 
-현재 작업 폴더는 `<project-root>/djcp_alarm_ai`입니다.
+## 환경 준비
 
-```text
-.
-|-- README.md
-|-- pyproject.toml
-|-- .env.example
-|-- .gitignore
-|-- data/
-|   |-- demo_seed.sql
-|   `-- tag_descriptions.json
-|-- migrations/
-|   |-- 000_create_operational_schema.sql
-|   `-- 001_ai_tag_description.sql
-|-- scripts/
-|   |-- apply_migration.sh
-|   |-- create_database.sh
-|   `-- load_demo_data.sh
-`-- src/
-    |-- djcp_alarm_ai/
-    |   |-- api.py
-    |   |-- config.py
-    |   |-- db.py
-    |   |-- generator.py
-    |   |-- main.py
-    |   |-- repositories.py
-    |   |-- schema_validation.py
-    |   |-- schemas.py
-    |   |-- service.py
-    |   |-- cli/
-    |   |-- knowledge/
-    |   `-- prompts/
-```
-
-로컬에서 생성되는 파일:
-
-```text
-.env                         로컬 환경 변수 파일, gitignore 대상
-.venv/                       Python 가상환경
-src/djcp_alarm_ai.egg-info/   editable install 생성물
-```
-
-프로젝트 요구 Python 버전은 `pyproject.toml` 기준 `>=3.11`입니다.
-
-## 1. PostgreSQL 설치
-
-Ubuntu 기준 설치 방법입니다.
+Python 3.11 이상이 필요합니다.
 
 ```bash
-sudo apt update
-sudo apt install -y postgresql postgresql-client jq
-sudo systemctl enable --now postgresql
+python -m venv .venv
 ```
 
-`jq`는 API 응답 JSON을 보기 좋게 출력하기 위한 도구입니다. `jq`가 없어도 API는
-동작하지만, 아래 테스트 명령의 `| jq '.answer'` 부분은 사용할 수 없습니다.
-
-설치 확인:
+가상환경을 활성화한 후 설치합니다.
 
 ```bash
-psql --version
-createdb --version
-sudo systemctl status postgresql --no-pager
+python -m pip install -e .
 ```
 
-이 프로젝트의 기본 `.env`는 DB 비밀번호를 `postgres`로 가정합니다. 로컬 개발용으로
-아래처럼 비밀번호를 맞춥니다.
-
-```bash
-sudo -u postgres psql -c "ALTER USER postgres WITH PASSWORD 'postgres';"
-```
-
-## 2. Python 환경 설치
-
-프로젝트 루트에서 실행합니다.
-
-```bash
-cd ~/workspace/djcp_alarm_ai
-python3 -m venv .venv
-.venv/bin/pip install -e .
-cp .env.example .env
-```
-
-설치되는 CLI 명령:
-
-```text
-djcp-description-sync
-djcp-seed-description-tags
-djcp-schema-check
-djcp-llm-smoke-test
-```
-
-## 3. 환경 변수 확인
-
-`.env` 파일이 아래와 비슷한지 확인합니다.
+`.env.example`을 `.env`로 복사하고 실행 환경에 맞게 수정합니다.
 
 ```dotenv
-DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:5432/djcp_alarm_ai
-PSQL_URL=postgresql://postgres:postgres@localhost:5432/djcp_alarm_ai
+DATABASE_URL=postgresql+psycopg://<user>:<password>@<host>:5432/djcp_alarm_ai
+PSQL_URL=postgresql://<user>:<password>@<host>:5432/djcp_alarm_ai
 LLM_BASE_URL=http://localhost:11434/v1
 LLM_API_KEY=ollama
-LLM_MODEL=qwen3.5:9b
+LLM_MODEL=qwen3.5:4b-q4_K_M
 LLM_TEMPERATURE=0.0
 LLM_TIMEOUT_SECONDS=120
 RECENT_ALARM_LIMIT=10
@@ -152,308 +55,215 @@ RECENT_MAINTENANCE_LIMIT=5
 RELATED_TAG_LIMIT=20
 ```
 
-`DATABASE_URL`은 FastAPI와 Python CLI가 DB에 접속할 때 사용합니다.
-`PSQL_URL`은 `scripts/*.sh`가 `psql`로 DB에 접속할 때 사용합니다.
-`LLM_BASE_URL`을 비우면 Qwen 없이 rule-based 답변을 생성합니다.
+애플리케이션과 DB가 같은 서버에서 실행될 때만 DB 호스트로 `localhost`를 사용합니다.
+`.env`는 Git에 커밋하지 않습니다.
 
-## 4. DB 생성 및 테이블 생성
+## 테스트 알람 생성
 
-스크립트 실행 권한을 부여하고 DB를 생성합니다.
+현재 `ALARM_VALUE`가 비어 있으므로 최근 알람 API를 테스트하려면 가상 이벤트 한 건을
+생성합니다. 임의 태그를 만들지 않고 반드시 `test.TAG_INFO`에 존재하는 `TAG_ID`를
+사용합니다.
+
+먼저 테스트할 태그를 찾습니다.
+
+```sql
+SELECT "TAG_ID", "TAG_NAME", "DESCRIPTION"
+FROM test."TAG_INFO"
+WHERE "TAG_NAME" = 'BBAIT-801';
+```
+
+Dry-run으로 입력 내용을 확인합니다.
 
 ```bash
-chmod +x scripts/*.sh
-PGPASSWORD=postgres PGUSER=postgres ./scripts/create_database.sh
+djcp-seed-test-alarm \
+  --tag-id 10011217 \
+  --value 12.4 \
+  --priority 4 \
+  --message "TEST ALARM" \
+  --dry-run
 ```
 
-이 스크립트는 `djcp_alarm_ai` DB를 만들고 아래 migration을 적용합니다.
-
-```text
-migrations/000_create_operational_schema.sql
-migrations/001_ai_tag_description.sql
-```
-
-이미 DB가 있으면 스크립트는 중단합니다. 다른 이름으로 새 DB를 만들려면:
+확인 후 `--dry-run`을 제거하면 같은 이벤트가 `ALARM_VALUE`와 `ALARM_HIST`에
+하나의 트랜잭션으로 입력됩니다.
 
 ```bash
-DB_NAME=djcp_alarm_ai_dev PGPASSWORD=postgres PGUSER=postgres ./scripts/create_database.sh
+djcp-seed-test-alarm \
+  --tag-id 10011217 \
+  --value 12.4 \
+  --priority 4 \
+  --message "TEST ALARM"
 ```
 
-기존 DB에 migration 하나만 직접 적용하려면:
+`TAG_ID`, 값, 우선순위, 메시지는 실제 테스트 목적에 맞게 변경합니다. 명령은
+`TAG_INFO`에서 태그명과 설명을 가져오므로 현재 테스트 서버의 마스터 정보만
+사용합니다.
+
+## API 실행
+
+LLM을 포함해 실행합니다.
 
 ```bash
-./scripts/apply_migration.sh migrations/001_ai_tag_description.sql
+uvicorn djcp_alarm_ai.main:app --reload
 ```
 
-## 5. DB 구조 설명
-
-이 프로젝트는 운영 데이터 테이블과 AI 설명 테이블을 분리합니다.
-
-```text
-asset
-  설비 정보입니다. 발전소, 호기, 보일러 같은 설비 계층을 저장합니다.
-
-tag
-  센서/태그 정보입니다. 각 tag는 asset_id로 어느 설비에 붙어 있는지 연결됩니다.
-
-alarm
-  알람 이력입니다. 각 alarm은 tag_id로 어떤 태그에서 발생했는지 연결됩니다.
-
-maintenance
-  정비 이력입니다. 각 maintenance는 asset_id로 어느 설비의 정비인지 연결됩니다.
-
-ai.tag_description
-  AI 답변에 사용할 태그 설명 지식입니다. data/tag_descriptions.json 내용을
-  실제 tag.id에 매핑해서 저장합니다.
-```
-
-관계는 아래처럼 이해하면 됩니다.
-
-```text
-asset.id
-  <- tag.asset_id
-      <- alarm.tag_id
-      <- ai.tag_description.tag_id
-
-asset.id
-  <- maintenance.asset_id
-```
-
-API 응답에서 `context`는 DB에서 모은 근거 데이터이고, `answer`는 최종 답변입니다.
-
-```text
-context.question
-context.alarm
-context.tag
-context.asset
-context.asset_path
-context.recent_alarms
-context.recent_maintenance
-context.related_tags
-context.tag_knowledge
-
-answer.summary
-answer.likely_causes
-answer.checks
-answer.actions
-answer.warnings
-```
-
-
-## 6. 데모 데이터 적재
-
-데모 설비, 태그, 알람, 정비 이력을 넣습니다.
+LLM 없이 DB 조회와 rule-based 응답만 확인하려면:
 
 ```bash
-./scripts/load_demo_data.sh
+LLM_BASE_URL= uvicorn djcp_alarm_ai.main:app --reload
 ```
 
-Description JSON의 모든 `tag_name`을 데모 DB의 `tag` 테이블에 생성합니다.
-`BB*` 태그는 `DEMO-BOILER-1`, `BC*` 태그는 `DEMO-BOILER-2`에 연결됩니다.
-
-```bash
-.venv/bin/djcp-seed-description-tags --split-boilers
-```
-
-그 다음 Description JSON 내용을 `ai.tag_description`에 동기화합니다.
-
-```bash
-.venv/bin/djcp-description-sync
-```
-
-운영 DB의 `tag_name` 매핑이 일부 비어 있거나 중복되어도 데모/증분 확인용으로
-해석 가능한 항목만 쓰려면 `--allow-partial`을 사용합니다.
-
-```bash
-.venv/bin/djcp-description-sync --allow-partial
-```
-
-## 7. DB 적재 확인
-
-스키마와 Description 매핑 상태를 확인합니다.
-
-```bash
-.venv/bin/djcp-schema-check
-.venv/bin/djcp-description-sync --dry-run
-```
-
-정상이라면 대략 아래 값을 확인할 수 있습니다.
-
-```text
-schema ok = true
-resolved_records = 163
-missing_tag_names = []
-```
-
-실제 알람 ID를 확인하려면:
-
-```bash
-PGPASSWORD=postgres psql "postgresql://postgres:postgres@localhost:5432/djcp_alarm_ai" \
-  -c "SELECT alarm.id, tag.tag_name, alarm.start_time, alarm.state FROM alarm JOIN tag ON tag.id = alarm.tag_id ORDER BY alarm.start_time DESC;"
-```
-
-## 8. DB-only API 테스트
-
-먼저 Qwen 없이 API를 테스트합니다. 이 단계가 성공하면 PostgreSQL, demo data,
-Description 동기화가 정상이라는 뜻입니다.
-
-```bash
-LLM_BASE_URL= .venv/bin/uvicorn djcp_alarm_ai.main:app --reload
-```
-
-다른 터미널에서 상태 확인:
+상태 확인:
 
 ```bash
 curl http://localhost:8000/health
 ```
 
-태그명 질문:
+API 문서:
 
-```bash
-curl -s -X POST http://localhost:8000/v2/analyses/from-tag \
-  -H 'Content-Type: application/json' \
-  -d '{"tag_name":"BBAIT-801","question":"이 태그 값이 왜 상승했어?"}' \
-  | jq '.answer'
+```text
+http://localhost:8000/docs
 ```
 
-다른 태그 예시:
+## API
 
-```bash
-curl -s -X POST http://localhost:8000/v2/analyses/from-tag \
-  -H 'Content-Type: application/json' \
-  -d '{"tag_name":"BBPIT-401","question":"압력이 비정상일 때 점검 순서를 알려줘"}' \
-  | jq '.answer'
+### 최근 알람 목록
+
+```http
+GET /v2/analyses/recent-alarms
 ```
 
-알람 ID 질문:
+`ALARM_VALUE`에 데이터가 없으면 정상적으로 빈 배열을 반환합니다.
 
-```bash
-curl -s -X POST http://localhost:8000/v2/analyses/from-alarm/1 \
-  -H 'Content-Type: application/json' \
-  -d '{"question":"이 알람이 발생한 원인과 점검 순서를 알려줘"}' \
-  | jq '.answer'
+### 최근 알람 분석
+
+```http
+POST /v2/analyses/from-recent-alarm
+Content-Type: application/json
 ```
-
-알람 ID가 `1`이 아닐 수 있습니다. 위의 SQL 조회 결과에서 나온 `alarm.id`로 바꿔서
-호출하면 됩니다.
-
-브라우저로 `http://localhost:8000/`에 접속하면 `404 Not Found`가 나올 수 있습니다.
-루트 `/`는 만들지 않았기 때문에 정상입니다. 상태 확인은 `/health`로 합니다.
-
-## 9. Ollama/Qwen 설치 및 확인
-
-Ollama 설치:
-
-```bash
-sudo apt install -y curl ca-certificates
-curl -fsSL https://ollama.com/install.sh | sh
-```
-
-Qwen 모델 다운로드:
-
-```bash
-ollama pull qwen3.5:9b
-```
-
-간단한 실행 확인:
-
-```bash
-ollama run qwen3.5:9b "Do not show reasoning. Answer only one short Korean sentence: 정상 작동 확인"
-```
-
-Qwen 계열 모델은 thinking 출력을 길게 보여줄 수 있습니다. 단순 테스트에서는 아래처럼
-`/no_think`를 붙여볼 수 있습니다.
-
-```bash
-ollama run qwen3.5:9b "/no_think 한국어로 한 문장만 답해줘: 정상 작동 확인"
-```
-
-프로젝트의 LLM smoke test:
-
-```bash
-.venv/bin/djcp-llm-smoke-test
-```
-
-이 명령이 JSON 형태의 `summary`, `likely_causes`, `checks`, `actions`, `warnings`를
-출력하면 Qwen 연결이 정상입니다.
-
-## 10. LLM 모드 API 테스트
-
-DB-only 테스트와 LLM smoke test가 모두 성공한 뒤 LLM 모드로 API를 실행합니다.
-API에서 LLM을 호출할 때는 Qwen thinking 출력을 줄이기 위해 질문 앞에 `/no_think`를 자동으로 붙입니다.
-
-```bash
-.venv/bin/uvicorn djcp_alarm_ai.main:app --reload
-```
-
-다른 터미널에서:
-
-```bash
-curl -s -X POST http://localhost:8000/v2/analyses/from-tag \
-  -H 'Content-Type: application/json' \
-  -d '{"tag_name":"BBAIT-801","question":"이 태그 값이 왜 상승했어?"}' \
-  | jq '.answer'
-```
-
-정상 응답 예시는 아래 구조입니다.
 
 ```json
 {
-  "summary": "요약 문장",
-  "likely_causes": [
-    "가능 원인"
-  ],
-  "checks": [
-    "점검 항목"
-  ],
-  "actions": [
-    "조치 방향"
-  ],
-  "warnings": [
-    "주의 사항"
-  ]
+  "tag_id": 10011217,
+  "timestamp": "2026-07-22T10:30:00+09:00",
+  "question": "이 알람의 가능한 원인과 점검 항목을 알려줘."
 }
 ```
 
-API가 `503 Local LLM answer generation is unavailable.`를 반환하면 DB 조회는 되었지만
-Qwen 답변 생성이 실패한 것입니다. 이때는 아래 순서로 확인합니다.
+`tag_id`와 `timestamp`는 최근 알람 목록에서 받은 값을 그대로 사용합니다.
 
-```bash
-systemctl status ollama --no-pager
-ollama list
-.venv/bin/djcp-llm-smoke-test
+### 과거 알람 분석
+
+```http
+POST /v2/analyses/from-history
+Content-Type: application/json
 ```
 
-Qwen 문제를 제외하고 DB/API만 다시 확인하려면:
-
-```bash
-LLM_BASE_URL= .venv/bin/uvicorn djcp_alarm_ai.main:app --reload
+```json
+{
+  "tag_id": 10011217,
+  "timestamp": "2026-07-22T10:30:00+09:00",
+  "question": "이 과거 알람의 원인과 조치 방향을 알려줘."
+}
 ```
 
-## Description 테이블 필드
+### 태그 질문
 
-Description은 `ai.tag_description` 단일 테이블에 저장됩니다. 런타임 조회는 항상
-`tag.id` 기준입니다.
+```http
+POST /v2/analyses/from-tag
+Content-Type: application/json
+```
+
+```json
+{
+  "tag_name": "BBAIT-801",
+  "question": "이 태그에서 알람이 발생하면 무엇을 확인해야 해?"
+}
+```
+
+현재 원격 데이터에서는 `TAG_NAME` 중복이 없지만, 코드에서는 중복 후보가 발견되면
+409와 후보 `TAG_ID` 목록을 반환합니다.
+
+## 응답 구조
+
+내부 조회 컨텍스트에서 클라이언트에 필요한 근거만 최상위 멤버로 반환합니다.
 
 ```text
-tag_id
-tag_name_snapshot
-description
-tag_nm
-tag_rmk
-tag_desc
-equipment_description
-tag_description
-value_change_meaning
-key_check_points
-action_guidance
-failure_guidance
-source_version
-content_hash
-is_verified
-created_at
-updated_at
+answer          LLM 또는 rule-based 최종 답변
+alarm           선택한 ALARM_VALUE/HIST 이벤트
+tag             TAG_INFO + TAG_INFO_EXT의 주요 정보와 알람 설정값
+asset           asset_tag_link로 연결된 설비
+related_tags    tag_description.related_tags 해석 결과
+sop             같은 tag_id 또는 sop_tag_name으로 연결된 SOP
+maintenance     선택된 asset.id의 최근 정비
+mimic           관련 Mimic 파일
+metrics         LLM 및 전체 분석 시간
 ```
 
-`tag_name`은 동기화 시 `tag.tag_name`과 매칭해서 실제 `tag.id`를 찾는 용도입니다.
-동기화 중 DB에 같은 `tag_name`이 여러 개 있으면 해당 항목은 ambiguous로 보고됩니다.
-API 호출에서는 같은 경우 `asset_id`를 함께 전달해 태그를 확정합니다.
+LLM에는 Mimic 파일 경로와 임베딩 벡터를 전달하지 않습니다.
+정비이력의 비용·작업자·확인자·팀 메모와 태그 설명의 중복 표시 필드도 LLM 입력에서
+제외합니다. 외부 응답에도 문서에서 제안한 필드만 포함합니다.
+
+`answer.likely_causes`는 다음 구조입니다.
+
+```json
+{
+  "cause": "가능 원인",
+  "basis": "DATABASE|TAG_DESCRIPTION|INFERENCE"
+}
+```
+
+## RAG 적용 범위
+
+- `TAG_INFO`, `TAG_INFO_EXT`, `tag_description`, 설비, 정비, Mimic은 키 기반 정확
+  조회입니다.
+- Mimic은 화면 이동용 메타데이터이므로 LLM 입력과 벡터 검색에서 제외합니다.
+- SOP가 적재되면 `tag_id` 또는 `sop_tag_name`으로 정확 조회해 LLM 근거에 포함합니다.
+- 현재 `sop_document.embedding`은 JSONB placeholder이고 원격 SOP 데이터도 비어
+  있으므로 벡터 유사도 검색은 아직 수행하지 않습니다.
+- 향후 pgvector 컬럼과 임베딩 모델이 확정되면 정확 조회 결과와 의미 검색 top-k를
+  합치는 하이브리드 검색을 추가합니다. 정의되지 않은 벡터 컬럼은 현재 코드에서
+  가정하지 않습니다.
+
+## LLM 안전 규칙
+
+- `PRIORITY` 숫자를 임의의 심각도 명칭으로 바꾸지 않습니다.
+- 값과 설정값만 보고 LL/LO/HI/HH 종류를 단정하지 않습니다.
+- `IS_ALM=0` 이벤트는 해제 이벤트로 표현합니다.
+- 입력에 없는 정비·사고·계측값을 만들지 않습니다.
+- SOP와 `tag_description`이 모두 있으면 함께 사용합니다. 태그 의미·값 변화 원인은
+  `tag_description`, 점검·조치·안전 절차는 SOP를 우선하며 충돌 시 SOP를 따릅니다.
+- 관련 태그의 현재 계측값이 없으면 동시 상승·하강을 단정하지 않습니다.
+
+## 검증
+
+로컬 DB 데이터가 원격과 달라도 실행 가능한 단위 테스트입니다.
+
+```bash
+pytest -q
+```
+
+Ollama 연결을 확인하려면:
+
+```bash
+djcp-llm-smoke-test
+```
+
+## 기준 자료와 SOP 적재
+
+`data/lab_handover/`와 `test_schema.sql`이 현재 설계의 기준 자료입니다. 전달 SQL은
+실행 시 `search_path`를 `test, public`으로 설정하므로 새 데이터도 `test` 스키마에
+적재됩니다.
+
+현재 원격에서 비어 있는 SOP만 적재하려면 다음 파일만 실행합니다.
+
+```bash
+psql "$PSQL_URL" -X -v ON_ERROR_STOP=1 \
+  -f data/lab_handover/sop_document.sql
+```
+
+전체 전달 데이터를 다시 적재해야 할 때만 `build.sql`을 사용합니다.
+
+전달 SQL에는 `tag_description` 4,105건과 이에 1:1로 대응하는 `sop_document`
+4,105건, 설비 29건, 태그-설비 연결 4,107건, 정비이력 125건이 포함되어 있습니다.
+SOP를 적재하면 별도 코드 변경 없이 태그별 정확 조회 결과가 `sop`과 LLM
+근거에 포함됩니다.
