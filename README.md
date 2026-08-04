@@ -319,7 +319,9 @@ djcp-test-scenarios --suite full
 응답의 `metrics.generation_mode`로 생성 경로를 확인할 수 있습니다.
 
 - `LLM`: 첫 번째 LLM 답변 사용
-- `RULE_BASED`: LLM을 설정하지 않은 실행
+
+`LLM_BASE_URL`이 설정되지 않으면 규칙 기반 답변으로 전환하지 않고 분석 API가 503을
+반환합니다. 최근 알람 목록처럼 LLM을 사용하지 않는 조회 API는 계속 사용할 수 있습니다.
 
 LLM 답변 요청은 OpenAI 호환 클라이언트의 `max_retries=1`을 사용하므로 일시적인
 통신·서버 오류에는 최대 한 번 재시도할 수 있습니다. 첫 번째로 수신한 답변의 내용이
