@@ -2,7 +2,8 @@ from datetime import datetime
 from time import perf_counter
 
 from djcp_alarm_ai.errors import AmbiguousTagError, NotFoundError
-from djcp_alarm_ai.generator import AnswerGenerator, build_answer_generator
+from djcp_alarm_ai.generator import AnswerGenerator
+from djcp_alarm_ai.manual_rag import ManualRetriever, NullManualRetriever
 from djcp_alarm_ai.repositories import DescriptionRepository, OperationalRepository
 from djcp_alarm_ai.schemas import AlarmInfo, AnalysisContext, AnalysisMetrics, AnalysisResponse
 
@@ -12,11 +13,13 @@ class AlarmAnalysisService:
         self,
         operational_repository: OperationalRepository,
         description_repository: DescriptionRepository,
-        answer_generator: AnswerGenerator | None = None,
+        answer_generator: AnswerGenerator,
+        manual_retriever: ManualRetriever | None = None,
     ) -> None:
         self.operational_repository = operational_repository
         self.description_repository = description_repository
-        self.answer_generator = answer_generator or build_answer_generator()
+        self.answer_generator = answer_generator
+        self.manual_retriever = manual_retriever or NullManualRetriever()
 
     def list_recent_alarms(self) -> list[AlarmInfo]:
         return self.operational_repository.list_recent_alarms()
@@ -76,17 +79,15 @@ class AlarmAnalysisService:
     def _analyze(self, context: AnalysisContext, started: float | None = None) -> AnalysisResponse:
         started = perf_counter() if started is None else started
         context.tag_knowledge = self.description_repository.get_by_tag_id(context.tag.tag_id)
-        context.sop = self.description_repository.get_sop(
-            context.tag.tag_id,
-            context.tag_knowledge.sop_tag_name if context.tag_knowledge else None,
-        )
         if context.tag_knowledge:
             context.related_tags = self.description_repository.resolve_related_tags(
                 context.tag_knowledge.related_tags,
                 limit=self.operational_repository.settings.related_tag_limit,
             )
+        context.manual_chunks = self.manual_retriever.retrieve(context)[:2]
         answer = self.answer_generator.generate(context)
         metrics = AnalysisMetrics(
+            generation_mode=self.answer_generator.generation_mode,
             llm_response_seconds=getattr(
                 self.answer_generator,
                 "last_llm_response_seconds",

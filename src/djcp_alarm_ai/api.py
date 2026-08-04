@@ -3,6 +3,8 @@ from sqlalchemy.orm import Session
 
 from djcp_alarm_ai.db import get_db
 from djcp_alarm_ai.errors import AmbiguousTagError, AnswerGenerationError, NotFoundError
+from djcp_alarm_ai.generator import build_answer_generator
+from djcp_alarm_ai.manual_rag import build_manual_retriever
 from djcp_alarm_ai.repositories import DescriptionRepository, OperationalRepository
 from djcp_alarm_ai.schemas import (
     AlarmAnalysisRequest,
@@ -20,6 +22,8 @@ def get_service(db: Session = Depends(get_db)) -> AlarmAnalysisService:
     return AlarmAnalysisService(
         operational_repository=OperationalRepository(db),
         description_repository=DescriptionRepository(db),
+        answer_generator=build_answer_generator(),
+        manual_retriever=build_manual_retriever(db),
     )
 
 

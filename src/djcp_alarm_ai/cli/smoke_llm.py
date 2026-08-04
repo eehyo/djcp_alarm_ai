@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 
 from djcp_alarm_ai.config import get_settings
 from djcp_alarm_ai.errors import AnswerGenerationError
-from djcp_alarm_ai.generator import RuleBasedAnswerGenerator, build_answer_generator
+from djcp_alarm_ai.generator import build_answer_generator
 from djcp_alarm_ai.schemas import (
     AlarmInfo,
     AnalysisContext,
@@ -16,8 +16,6 @@ from djcp_alarm_ai.schemas import (
 def main() -> None:
     settings = get_settings()
     generator = build_answer_generator(settings)
-    if isinstance(generator, RuleBasedAnswerGenerator):
-        raise SystemExit("Set LLM_BASE_URL to run the local LLM smoke test.")
 
     context = AnalysisContext(
         question="이 알람이 발생한 가능한 원인과 점검 순서를 알려줘.",
@@ -61,6 +59,8 @@ def main() -> None:
     try:
         answer = generator.generate(context)
     except AnswerGenerationError:
+        if not settings.llm_base_url:
+            raise SystemExit("Set LLM_BASE_URL to run the local LLM smoke test.")
         raise SystemExit(
             f"Local LLM request failed at {settings.llm_base_url}. "
             "Start the model server and confirm LLM_MODEL is installed."

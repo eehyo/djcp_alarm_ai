@@ -20,7 +20,50 @@ class Settings(BaseSettings):
         validation_alias="RECENT_MAINTENANCE_LIMIT",
     )
     related_tag_limit: int = Field(default=20, validation_alias="RELATED_TAG_LIMIT")
-
+    manual_rag_enabled: bool = Field(
+        default=False,
+        validation_alias="MANUAL_RAG_ENABLED",
+    )
+    embedding_base_url: str | None = Field(
+        default=None,
+        validation_alias="EMBEDDING_BASE_URL",
+    )
+    embedding_api_key: str | None = Field(
+        default=None,
+        validation_alias="EMBEDDING_API_KEY",
+    )
+    embedding_model: str = Field(
+        default="bge-m3",
+        validation_alias="EMBEDDING_MODEL",
+    )
+    embedding_dimension: int = Field(
+        default=1024,
+        validation_alias="EMBEDDING_DIMENSION",
+    )
+    embedding_timeout_seconds: float = Field(
+        default=30.0,
+        validation_alias="EMBEDDING_TIMEOUT_SECONDS",
+    )
+    manual_rag_candidate_limit: int = Field(
+        default=12,
+        validation_alias="MANUAL_RAG_CANDIDATE_LIMIT",
+    )
+    manual_rag_result_limit: int = Field(
+        default=2,
+        validation_alias="MANUAL_RAG_RESULT_LIMIT",
+    )
+    manual_rag_candidate_min_similarity: float = Field(
+        default=0.60,
+        validation_alias="MANUAL_RAG_CANDIDATE_MIN_SIMILARITY",
+    )
+    manual_rag_min_similarity: float = Field(
+        default=0.70,
+        validation_alias="MANUAL_RAG_MIN_SIMILARITY",
+    )
+    manual_rag_high_similarity: float = Field(
+        default=0.82,
+        validation_alias="MANUAL_RAG_HIGH_SIMILARITY",
+    )
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
 

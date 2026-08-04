@@ -127,18 +127,6 @@ class TagKnowledge(BaseModel):
     action_guidance: str | None = None
     failure_guidance: str | None = None
     related_tags: list[RelatedTagReference] = Field(default_factory=list)
-    sop_tag_name: str | None = None
-
-
-class SopInfo(BaseModel):
-    tag_id: int | None = None
-    tag_name: str
-    description: str | None = None
-    system_name: str | None = None
-    kind: str | None = None
-    scenarios: list[str] = Field(default_factory=list)
-    content: str
-    embedding_model: str | None = None
 
 
 class MimicInfo(BaseModel):
@@ -147,6 +135,16 @@ class MimicInfo(BaseModel):
     last_write_ticks: int
     chg_date: datetime
     chg_id: str
+
+
+class ManualChunk(BaseModel):
+    source_name: str
+    chunk_id: str
+    title: str
+    pdf_page: str
+    manual_page: str | None = None
+    content: str
+    similarity: float | None = Field(default=None, exclude=True, repr=False)
 
 
 class AnalysisContext(BaseModel):
@@ -159,24 +157,27 @@ class AnalysisContext(BaseModel):
     recent_maintenance: list[MaintenanceInfo] = Field(default_factory=list)
     related_tags: list[RelatedTag] = Field(default_factory=list)
     tag_knowledge: TagKnowledge | None = None
-    sop: SopInfo | None = None
     mimic: list[MimicInfo] = Field(default_factory=list)
+    manual_chunks: list[ManualChunk] = Field(default_factory=list)
 
 
 class LikelyCause(BaseModel):
     cause: str
-    basis: Literal["DATABASE", "TAG_DESCRIPTION", "INFERENCE"]
+    basis: Literal["DATABASE", "TAG_DESCRIPTION", "MANUAL", "INFERENCE"]
 
 
 class AnalysisAnswer(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     summary: str
-    likely_causes: list[LikelyCause] = Field(default_factory=list)
-    checks: list[str] = Field(default_factory=list)
-    actions: list[str] = Field(default_factory=list)
-    warnings: list[str] = Field(default_factory=list)
+    likely_causes: list[LikelyCause]
+    checks: list[str]
+    actions: list[str]
+    warnings: list[str]
 
 
 class AnalysisMetrics(BaseModel):
+    generation_mode: Literal["LLM"]
     llm_response_seconds: float | None = None
     analysis_total_seconds: float | None = None
 
@@ -220,12 +221,6 @@ class RelatedTagResponse(BaseModel):
     description: str | None = None
 
 
-class SopResponse(BaseModel):
-    tag_name: str
-    scenarios: list[str] = Field(default_factory=list)
-    content: str
-
-
 class MaintenanceResponse(BaseModel):
     work_name: str
     maint_type: str
@@ -240,15 +235,23 @@ class MimicResponse(BaseModel):
     file_size: int
 
 
+class ManualResponse(BaseModel):
+    source_name: str
+    chunk_id: str
+    title: str
+    pdf_page: str
+    manual_page: str | None = None
+
+
 class AnalysisResponse(BaseModel):
     answer: AnalysisAnswer
     alarm: AlarmResponse | None = None
     tag: TagResponse
     asset: AssetResponse | None = None
     related_tags: list[RelatedTagResponse] = Field(default_factory=list)
-    sop: SopResponse | None = None
     maintenance: list[MaintenanceResponse] = Field(default_factory=list)
     mimic: list[MimicResponse] = Field(default_factory=list)
+    manual: list[ManualResponse] = Field(default_factory=list)
     metrics: AnalysisMetrics | None = None
 
     @classmethod
@@ -293,15 +296,6 @@ class AnalysisResponse(BaseModel):
             if context.asset
             else None
         )
-        sop = (
-            SopResponse(
-                tag_name=context.sop.tag_name,
-                scenarios=context.sop.scenarios,
-                content=context.sop.content,
-            )
-            if context.sop
-            else None
-        )
         return cls(
             answer=answer,
             alarm=alarm,
@@ -314,7 +308,6 @@ class AnalysisResponse(BaseModel):
                 )
                 for related_tag in context.related_tags
             ],
-            sop=sop,
             maintenance=[
                 MaintenanceResponse(
                     work_name=item.work_name,
@@ -332,6 +325,16 @@ class AnalysisResponse(BaseModel):
                     file_size=item.file_size,
                 )
                 for item in context.mimic
+            ],
+            manual=[
+                ManualResponse(
+                    source_name=item.source_name,
+                    chunk_id=item.chunk_id,
+                    title=item.title,
+                    pdf_page=item.pdf_page,
+                    manual_page=item.manual_page,
+                )
+                for item in context.manual_chunks[:2]
             ],
             metrics=metrics,
         )

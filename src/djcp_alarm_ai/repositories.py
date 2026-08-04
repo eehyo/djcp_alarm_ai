@@ -13,7 +13,6 @@ from djcp_alarm_ai.schemas import (
     MimicInfo,
     RelatedTag,
     RelatedTagReference,
-    SopInfo,
     TagCandidate,
     TagInfo,
     TagKnowledge,
@@ -317,34 +316,9 @@ TAG_KNOWLEDGE_SQL = text(
         d.key_check_points,
         d.action_guidance,
         d.failure_guidance,
-        d.related_tags,
-        d.sop_tag_name
+        d.related_tags
     FROM test.tag_description d
     WHERE d.tag_id = :tag_id
-    """
-)
-
-SOP_SQL = text(
-    """
-    SELECT
-        s.tag_id,
-        s.tag_name,
-        s.description,
-        s.system_name,
-        s.kind,
-        s.scenarios,
-        s.content,
-        s.embedding_model
-    FROM test.sop_document s
-    WHERE s.tag_id = :tag_id
-       OR (
-            CAST(:sop_tag_name AS varchar) IS NOT NULL
-        AND s.tag_name = CAST(:sop_tag_name AS varchar)
-       )
-    ORDER BY
-        CASE WHEN s.tag_id = :tag_id THEN 0 ELSE 1 END,
-        s.id
-    LIMIT 1
     """
 )
 
@@ -476,21 +450,6 @@ class DescriptionRepository:
         payload = dict(row)
         payload["related_tags"] = payload.get("related_tags") or []
         return TagKnowledge.model_validate(payload)
-
-    def get_sop(
-        self,
-        tag_id: int,
-        sop_tag_name: str | None = None,
-    ) -> SopInfo | None:
-        row = self.db.execute(
-            SOP_SQL,
-            {"tag_id": tag_id, "sop_tag_name": sop_tag_name},
-        ).mappings().one_or_none()
-        if row is None:
-            return None
-        payload = dict(row)
-        payload["scenarios"] = payload.get("scenarios") or []
-        return SopInfo.model_validate(payload)
 
     def resolve_related_tags(
         self,

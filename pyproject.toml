@@ -15,10 +15,11 @@ dependencies = [
 ]
 
 [project.scripts]
-djcp-description-sync = "djcp_alarm_ai.cli.sync_descriptions:main"
-djcp-seed-description-tags = "djcp_alarm_ai.cli.seed_description_tags:main"
-djcp-schema-check = "djcp_alarm_ai.cli.check_schema:main"
 djcp-llm-smoke-test = "djcp_alarm_ai.cli.smoke_llm:main"
+djcp-seed-test-alarm = "djcp_alarm_ai.cli.seed_test_alarm:main"
+djcp-test-scenarios = "djcp_alarm_ai.cli.run_scenarios:main"
+djcp-preprocess-manual = "djcp_alarm_ai.cli.preprocess_manual:main"
+djcp-index-manual = "djcp_alarm_ai.cli.index_manual:main"
 
 [build-system]
 requires = ["setuptools>=68.0"]
