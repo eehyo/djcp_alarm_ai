@@ -33,6 +33,7 @@ class Settings(BaseSettings):
     llm_model: str = Field(default="qwen3.5:9b", validation_alias="LLM_MODEL")
     llm_temperature: float = Field(default=0.0, validation_alias="LLM_TEMPERATURE")
     llm_timeout_seconds: float = Field(default=120.0, validation_alias="LLM_TIMEOUT_SECONDS")
+    llm_max_tokens: int = Field(default=2048, validation_alias="LLM_MAX_TOKENS")
     recent_alarm_limit: int = Field(default=10, validation_alias="RECENT_ALARM_LIMIT")
     recent_maintenance_limit: int = Field(
         default=5,

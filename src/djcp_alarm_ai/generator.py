@@ -74,6 +74,7 @@ class OpenAICompatibleAnswerGenerator:
             response = self.client.chat.completions.create(
                 model=self.settings.llm_model,
                 temperature=self.settings.llm_temperature,
+                max_tokens=self.settings.llm_max_tokens,
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {
