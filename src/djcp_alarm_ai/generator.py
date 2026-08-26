@@ -172,11 +172,30 @@ def _extract_json_payload(content: str) -> object:
         raise ValueError("LLM response must be one complete JSON value") from exc
 
 
+def _salvage_answer_shape(payload: dict) -> dict:
+    """작은 모델이 스키마를 무시하고 {"answer": "줄글"} 형태로 답한 경우,
+    최소한 summary로 살려 503 대신 답을 반환한다(구조화 항목은 비움)."""
+    if "summary" in payload:
+        return payload
+    for key in ("answer", "response", "result", "output", "text", "content", "message"):
+        value = payload.get(key)
+        if isinstance(value, str) and value.strip():
+            logger.warning("answer payload missing schema; salvaged from %r key", key)
+            return {
+                "summary": value.strip(),
+                "likely_causes": [],
+                "checks": [],
+                "actions": [],
+                "warnings": [],
+            }
+    return payload
+
+
 def _normalize_answer_payload(payload: object) -> object:
     if not isinstance(payload, dict):
         return payload
 
-    normalized = dict(payload)
+    normalized = _salvage_answer_shape(dict(payload))
     if "likely_causes" in normalized:
         normalized["likely_causes"] = _normalize_causes(
             normalized["likely_causes"]
