@@ -116,6 +116,13 @@ def build_answer_generator(settings: Settings | None = None) -> AnswerGenerator:
     return OpenAICompatibleAnswerGenerator(settings)
 
 
+def _screen_name(file_path: str | None) -> str:
+    """mimic 파일 경로에서 화면 이름(마지막 경로 요소)만 뽑는다."""
+    if not file_path:
+        return ""
+    return file_path.replace("\\", "/").rstrip("/").split("/")[-1].strip()
+
+
 def _build_context_payload(
     context: AnalysisContext,
     *,
@@ -126,16 +133,17 @@ def _build_context_payload(
         mode="json",
         exclude_none=True,
         exclude={
+            # mimic 전체 경로는 노이즈라 제외하고, 화면 이름만 아래에서 따로 넣는다.
             "mimic": True,
             "recent_maintenance": {
+                # id/키/비용은 분석에 불필요해 제외. worker(작업자)는 "누가 정비했나"
+                # 질문 대응을 위해 포함한다. work_description, team_note 등 내용 필드도 전달.
                 "__all__": {
                     "id",
                     "work_code",
                     "asset_id",
-                    "worker",
                     "cost",
                     "confirmer",
-                    "team_note",
                 }
             },
             "loto": {"__all__": {"id", "asset_id"}},
@@ -150,6 +158,11 @@ def _build_context_payload(
             },
         },
     )
+    # mimic은 전체 경로 대신 화면 이름만 힌트로 전달한다(태그가 어느 화면에 있는지).
+    screens = [_screen_name(item.file_path) for item in context.mimic]
+    screens = [name for name in screens if name]
+    if screens:
+        payload["mimic_screens"] = screens
     if "manual_chunks" in payload:
         payload["manual_chunks"] = payload["manual_chunks"][:2]
     if no_think_question:
@@ -172,12 +185,15 @@ def _extract_json_payload(content: str) -> object:
         raise ValueError("LLM response must be one complete JSON value") from exc
 
 
+_PROSE_KEYS = ("answer", "response", "result", "output", "text", "content", "message")
+
+
 def _salvage_answer_shape(payload: dict) -> dict:
-    """작은 모델이 스키마를 무시하고 {"answer": "줄글"} 형태로 답한 경우,
-    최소한 summary로 살려 503 대신 답을 반환한다(구조화 항목은 비움)."""
+    """작은 모델이 스키마를 무시하고 {"answer": "줄글"} 형태로 답한 경우에 한해
+    summary로 구제한다(구조화 항목은 비움). 그 외 형식 이탈은 엄격 계약대로 거부."""
     if "summary" in payload:
         return payload
-    for key in ("answer", "response", "result", "output", "text", "content", "message"):
+    for key in _PROSE_KEYS:
         value = payload.get(key)
         if isinstance(value, str) and value.strip():
             logger.warning("answer payload missing schema; salvaged from %r key", key)
@@ -197,9 +213,7 @@ def _normalize_answer_payload(payload: object) -> object:
 
     normalized = _salvage_answer_shape(dict(payload))
     if "likely_causes" in normalized:
-        normalized["likely_causes"] = _normalize_causes(
-            normalized["likely_causes"]
-        )
+        normalized["likely_causes"] = _normalize_causes(normalized["likely_causes"])
     for key in ("checks", "actions", "warnings"):
         if key in normalized:
             normalized[key] = _normalize_string_list(normalized[key], key=key)

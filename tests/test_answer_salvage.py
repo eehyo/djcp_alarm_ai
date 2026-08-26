@@ -20,3 +20,11 @@ def test_normal_schema_still_parses():
     answer = _parse_answer_content(content)
     assert answer.summary == "요약"
     assert answer.checks == ["c1"]
+
+
+def test_screen_name_extracts_basename_from_windows_path():
+    from djcp_alarm_ai.generator import _screen_name
+
+    p = r"D:\Project\FLab\doc\Daejeon\DCS\21. Steam Turbine System 2.G"
+    assert _screen_name(p) == "21. Steam Turbine System 2.G"
+    assert _screen_name(None) == ""

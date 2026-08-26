@@ -245,6 +245,7 @@ class MaintenanceResponse(BaseModel):
     work_name: str
     maint_type: str
     status: str
+    worker: str | None = None
     completed_at: datetime | None = None
     inspection_result: str | None = None
     work_description: str | None = None
@@ -343,6 +344,7 @@ class AnalysisResponse(BaseModel):
                     work_name=item.work_name,
                     maint_type=item.maint_type,
                     status=item.status,
+                    worker=item.worker,
                     completed_at=item.completed_at,
                     inspection_result=item.inspection_result,
                     work_description=item.work_description,

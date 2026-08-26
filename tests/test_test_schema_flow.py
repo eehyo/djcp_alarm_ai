@@ -129,9 +129,11 @@ def test_llm_payload_excludes_mimic_navigation_metadata() -> None:
     assert "is_ack" not in payload["alarm"]
     assert payload["tag"]["hi_alm_val"] == 10.0
     assert payload["recent_maintenance"][0]["work_name"] == "분석기 교정"
-    assert "worker" not in payload["recent_maintenance"][0]
+    # worker(작업자)는 "누가 정비했는지" 대응을 위해 LLM 입력에 포함한다.
+    assert payload["recent_maintenance"][0]["worker"] == "작업자"
     assert "cost" not in payload["recent_maintenance"][0]
-    assert "team_note" not in payload["recent_maintenance"][0]
+    # id/키/비용은 제외, team_note 등 내용 필드는 포함.
+    assert "id" not in payload["recent_maintenance"][0]
     assert "tag_nm" not in payload["tag_knowledge"]
 
 
@@ -152,7 +154,7 @@ def test_api_response_projects_required_evidence_to_top_level() -> None:
     }
     assert response["related_tags"][0]["tag_name"] == "BBAIT-802A"
     assert response["maintenance"][0]["work_name"] == "분석기 교정"
-    assert "worker" not in response["maintenance"][0]
+    assert response["maintenance"][0]["worker"] == "작업자"
     assert response["mimic"] == [
         {"file_path": "C:/mimic/boiler.g", "file_size": 100}
     ]
