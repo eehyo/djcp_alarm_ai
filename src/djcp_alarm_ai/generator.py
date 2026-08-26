@@ -226,12 +226,10 @@ def _normalize_causes(value: object) -> list[dict[str, str]]:
         raise TypeError("likely_causes must be an array")
     normalized: list[dict[str, str]] = []
     for item in value:
-        if not isinstance(item, dict):
-            raise TypeError("likely_causes items must be objects")
         cause = _normalize_string_item(item, key="likely_causes")
         if not cause:
             continue
-        basis = _normalize_basis(item.get("basis"))
+        basis = _normalize_basis(item.get("basis") if isinstance(item, dict) else None)
         normalized.append(
             {
                 "cause": cause,

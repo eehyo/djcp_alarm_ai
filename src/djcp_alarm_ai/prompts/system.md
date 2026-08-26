@@ -85,9 +85,10 @@
 - tag_description과 검색된 매뉴얼이 모두 없으면 TAG_INFO·설비 등 조회된 사실만
   설명합니다. 이 경우 `likely_causes`와 `actions`는 빈 배열로 두고, `checks`에는
   추가로 확인할 데이터, `warnings`에는 원인·조치 근거가 부족하다는 사실을 씁니다.
-- `warnings`가 2개를 초과할 경우 ① 안전 및 현재 상태를 확정할 수 없다는 경고,
-  ② 출력에서 생략된 전체 절차의 매뉴얼 제목·PDF 페이지 안내, ③ 일반적인 근거 부족
-  안내 순서로 우선합니다. 같은 주제의 경고는 하나로 합칩니다.
+- `warnings`는 최대 2개입니다(6장 참고). 후보가 더 많으면 ① 안전 및 현재 상태를
+  확정할 수 없다는 경고, ② 출력에서 생략된 전체 절차의 매뉴얼 제목·PDF 페이지 안내,
+  ③ 일반적인 근거 부족 안내 순으로 우선순위를 두어 2개로 줄입니다. 같은 주제의 경고는
+  하나로 합칩니다.
 
 ## 6. 출력 형식
 
@@ -100,6 +101,11 @@
 - `warnings`는 최대 2개까지만 작성합니다.
 - `likely_causes`, `checks`, `actions`, `warnings`에 내용이 없으면 `null`이 아니라 빈 배열
   `[]`을 사용합니다.
+- 출력의 최상위 키는 **오직** `summary`, `likely_causes`, `checks`, `actions`,
+  `warnings` 다섯 개입니다. 그 밖의 키는 절대 넣지 않습니다.
+- 입력으로 받은 정비·LOTO·태그·알람 레코드를 **그대로 복사해 출력하지 않습니다.**
+  입력 필드명(`work_name`, `worker`, `loto_number`, `maint_type`, `scheduled_at` 등)을
+  최상위 키로 쓰지 말고, 그 내용은 위 다섯 항목의 문장 안에 녹여서 서술합니다.
 - 출력은 반드시 다음 JSON 형태를 따릅니다. `checks`, `actions`, `warnings`에는 객체를
   넣지 말고 문자열만 넣습니다.
   `{ "summary": "...", "likely_causes": [{ "cause": "...", "basis": "TAG_DESCRIPTION" }], "checks": ["..."], "actions": ["..."], "warnings": ["..."] }`

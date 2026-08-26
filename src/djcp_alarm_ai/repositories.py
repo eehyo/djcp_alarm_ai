@@ -407,7 +407,7 @@ RELATED_TAGS_SQL = text(
         ti."ENG_UNIT" AS eng_unit
     FROM public."TAG_INFO" ti
     LEFT JOIN public."TAG_INFO_EXT" tie ON tie."TAG_ID" = ti."TAG_ID"
-    WHERE ti."TAG_NAME" = ANY(CAST(:tag_names AS varchar[]))
+    WHERE upper(ti."TAG_NAME") = ANY(CAST(:tag_names AS varchar[]))
     ORDER BY ti."TAG_NAME", ti."TAG_ID"
     """
 )
@@ -625,15 +625,16 @@ class DescriptionRepository:
 
         rows = self.fdas_db.execute(
             RELATED_TAGS_SQL,
-            {"tag_names": [reference.tag_name for reference in references]},
+            {"tag_names": [reference.tag_name.upper() for reference in references]},
         ).mappings()
+        # 대소문자 무시로 매칭한다(tag_description의 태그명 표기가 TAG_INFO와 다를 수 있음).
         resolved_by_name = {
-            str(row["tag_name"]): RelatedTag.model_validate(row)
+            str(row["tag_name"]).upper(): RelatedTag.model_validate(row)
             for row in rows
         }
         return [
             resolved_by_name.get(
-                reference.tag_name,
+                reference.tag_name.upper(),
                 RelatedTag(
                     tag_name=reference.tag_name,
                     description=reference.description,

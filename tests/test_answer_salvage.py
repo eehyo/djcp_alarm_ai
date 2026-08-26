@@ -28,3 +28,15 @@ def test_screen_name_extracts_basename_from_windows_path():
     p = r"D:\Project\FLab\doc\Daejeon\DCS\21. Steam Turbine System 2.G"
     assert _screen_name(p) == "21. Steam Turbine System 2.G"
     assert _screen_name(None) == ""
+
+
+def test_normalize_causes_skips_malformed_items_without_503():
+    content = (
+        '{"summary": "요약", '
+        '"likely_causes": [123, {"cause": "정상 원인", "basis": "DB"}], '
+        '"checks": [], "actions": [], "warnings": []}'
+    )
+    answer = _parse_answer_content(content)
+    assert len(answer.likely_causes) == 1
+    assert answer.likely_causes[0].cause == "정상 원인"
+    assert answer.likely_causes[0].basis == "DATABASE"
