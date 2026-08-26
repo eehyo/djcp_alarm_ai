@@ -20,6 +20,7 @@ CREATE TABLE IF NOT EXISTS tag_description (
     created_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at              TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+CREATE INDEX IF NOT EXISTS idx_tagdesc_tagname ON tag_description(tag_name);
 
 -- 2) 매뉴얼 RAG 저장소
 CREATE TABLE IF NOT EXISTS manual_document (
