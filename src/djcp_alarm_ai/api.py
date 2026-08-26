@@ -11,9 +11,11 @@ from djcp_alarm_ai.schemas import (
     AlarmInfo,
     AnalysisResponse,
     QuestionAnalysisRequest,
+    QuestionAnalysisResponse,
     TagAnalysisRequest,
 )
 from djcp_alarm_ai.service import AlarmAnalysisService
+from djcp_alarm_ai.tag_selector import build_tag_selector
 
 
 router = APIRouter(prefix="/v2/analyses", tags=["analyses-v2"])
@@ -29,6 +31,7 @@ def get_service(
         description_repository=DescriptionRepository(ai_db, fdas_db),
         answer_generator=build_answer_generator(),
         manual_retriever=build_manual_retriever(ai_db),
+        tag_selector=build_tag_selector(),
     )
 
 
@@ -79,23 +82,15 @@ def analyze_history(
         ) from exc
 
 
-@router.post("/ask", response_model=AnalysisResponse)
+@router.post("/ask", response_model=QuestionAnalysisResponse)
 def analyze_question(
     payload: QuestionAnalysisRequest,
     service: AlarmAnalysisService = Depends(get_service),
-) -> AnalysisResponse:
+) -> QuestionAnalysisResponse:
     try:
         return service.analyze_question(payload.question)
     except NotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
-    except AmbiguousTagError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail={
-                "message": "질문에서 여러 태그가 인식되었습니다. 태그를 하나만 지정해 주세요.",
-                "candidates": [candidate.model_dump() for candidate in exc.candidates],
-            },
-        ) from exc
     except AnswerGenerationError as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,

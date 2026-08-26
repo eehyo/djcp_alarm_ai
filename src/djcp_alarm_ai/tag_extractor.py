@@ -38,3 +38,31 @@ def _looks_like_tag(token: str) -> bool:
     has_sep = "-" in token or "_" in token
     # 태그명은 보통 문자를 포함하며, (숫자 포함) 또는 (구분자 포함) 형태다.
     return has_alpha and (has_digit or has_sep)
+
+
+# 질문에서 태그명이 안 잡힐 때 설명(DESCRIPTION) 매칭용 키워드를 뽑는다.
+_WORD_RE = re.compile(r"[0-9A-Za-z가-힣]+")
+
+# 태그 의미와 무관한 조사/일반어(설명 매칭 노이즈 감소용).
+_STOPWORDS = frozenset(
+    {
+        "지금", "상태", "어때", "어떄", "알람", "발생", "분석", "분석해줘", "태그",
+        "원인", "확인", "해줘", "있어", "관련", "정보", "현재", "지역", "값이",
+        "무엇", "뭐야", "알려줘", "이거", "저거", "그거", "대해", "대한", "에서",
+        "이건", "인데", "있는", "중이야", "중인데", "정상", "설명",
+    }
+)
+
+
+def extract_keywords(question: str) -> list[str]:
+    """설명 기반 후보 검색용 키워드(중복 제거, 원문 순서)."""
+    seen: set[str] = set()
+    words: list[str] = []
+    for word in _WORD_RE.findall(question or ""):
+        if len(word) < 2 or word.isdigit() or word in _STOPWORDS:
+            continue
+        if word in seen:
+            continue
+        seen.add(word)
+        words.append(word)
+    return words

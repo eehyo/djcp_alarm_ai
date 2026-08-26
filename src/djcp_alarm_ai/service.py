@@ -1,11 +1,19 @@
 from datetime import datetime
 from time import perf_counter
 
+from djcp_alarm_ai.config import get_settings
 from djcp_alarm_ai.errors import AmbiguousTagError, NotFoundError
 from djcp_alarm_ai.generator import AnswerGenerator
 from djcp_alarm_ai.manual_rag import ManualRetriever, NullManualRetriever
 from djcp_alarm_ai.repositories import DescriptionRepository, OperationalRepository
-from djcp_alarm_ai.schemas import AlarmInfo, AnalysisContext, AnalysisMetrics, AnalysisResponse
+from djcp_alarm_ai.schemas import (
+    AlarmInfo,
+    AnalysisContext,
+    AnalysisMetrics,
+    AnalysisResponse,
+    QuestionAnalysisResponse,
+)
+from djcp_alarm_ai.tag_selector import NullTagSelector, TagSelector
 
 
 class AlarmAnalysisService:
@@ -15,11 +23,13 @@ class AlarmAnalysisService:
         description_repository: DescriptionRepository,
         answer_generator: AnswerGenerator,
         manual_retriever: ManualRetriever | None = None,
+        tag_selector: TagSelector | None = None,
     ) -> None:
         self.operational_repository = operational_repository
         self.description_repository = description_repository
         self.answer_generator = answer_generator
         self.manual_retriever = manual_retriever or NullManualRetriever()
+        self.tag_selector = tag_selector or NullTagSelector()
 
     def list_recent_alarms(self) -> list[AlarmInfo]:
         return self.operational_repository.list_recent_alarms()
@@ -76,18 +86,34 @@ class AlarmAnalysisService:
             raise NotFoundError(f"tag not found: {candidates[0].tag_id}")
         return self._analyze(context, started)
 
-    def analyze_question(self, question: str) -> AnalysisResponse:
-        """태그를 따로 지정하지 않은 자유질문에서 태그를 인식해 분석한다."""
-        started = perf_counter()
+    def analyze_question(self, question: str) -> QuestionAnalysisResponse:
+        """자유질문에서 태그를 인식·선별해 태그별로 분석한다.
+
+        1) 태그명 매칭으로 후보를 만든다(우선).
+        2) 태그명이 안 잡히면 설명(DESCRIPTION) 키워드로 후보를 만든다.
+        3) LLM이 후보 중 질문이 실제로 요구하는 태그만 선별한다.
+        4) 선별된 태그별로 개별 분석을 생성해 리스트로 반환한다.
+        """
         candidates = self.operational_repository.find_tags_in_text(question)
         if not candidates:
+            candidates = self.operational_repository.find_tag_candidates_by_keywords(question)
+        if not candidates:
             raise NotFoundError("질문에서 유효한 태그를 찾지 못했습니다.")
-        if len(candidates) > 1:
-            raise AmbiguousTagError(question, candidates)
-        context = self.operational_repository.load_from_tag(candidates[0].tag_id, question)
-        if context is None:
-            raise NotFoundError(f"tag not found: {candidates[0].tag_id}")
-        return self._analyze(context, started)
+
+        selected_ids = self.tag_selector.select(question, candidates)
+        if not selected_ids:
+            selected_ids = [candidates[0].tag_id]
+
+        max_tags = get_settings().ask_max_tags
+        analyses: list[AnalysisResponse] = []
+        for tag_id in selected_ids[:max_tags]:
+            context = self.operational_repository.load_from_tag(tag_id, question)
+            if context is not None:
+                analyses.append(self._analyze(context))
+
+        if not analyses:
+            raise NotFoundError("선별된 태그를 조회하지 못했습니다.")
+        return QuestionAnalysisResponse(question=question, analyses=analyses)
 
     def _analyze(self, context: AnalysisContext, started: float | None = None) -> AnalysisResponse:
         started = perf_counter() if started is None else started

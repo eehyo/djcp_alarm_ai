@@ -4,7 +4,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from djcp_alarm_ai.config import Settings, get_settings
-from djcp_alarm_ai.tag_extractor import extract_tag_tokens
+from djcp_alarm_ai.tag_extractor import extract_keywords, extract_tag_tokens
 from djcp_alarm_ai.schemas import (
     AlarmInfo,
     AnalysisContext,
@@ -197,6 +197,22 @@ RESOLVE_TAGS_BY_NAMES_SQL = text(
     LEFT JOIN public."TAG_INFO_EXT" tie ON tie."TAG_ID" = ti."TAG_ID"
     WHERE upper(ti."TAG_NAME") = ANY(CAST(:names AS varchar[]))
     ORDER BY ti."TAG_ID"
+    """
+)
+
+SEARCH_TAGS_BY_KEYWORDS_SQL = text(
+    """
+    SELECT
+        ti."TAG_ID" AS tag_id,
+        ti."TAG_NAME" AS tag_name,
+        ti."DESCRIPTION" AS description,
+        ti."SYSTEM" AS system,
+        tie."DISPLAY_NAME" AS display_name
+    FROM public."TAG_INFO" ti
+    LEFT JOIN public."TAG_INFO_EXT" tie ON tie."TAG_ID" = ti."TAG_ID"
+    WHERE ti."DESCRIPTION" ILIKE ANY(CAST(:patterns AS text[]))
+    ORDER BY ti."TAG_ID"
+    LIMIT :limit
     """
 )
 
@@ -441,6 +457,23 @@ class OperationalRepository:
             candidate = TagCandidate.model_validate(row)
             by_id.setdefault(candidate.tag_id, candidate)
         return list(by_id.values())
+
+    def find_tag_candidates_by_keywords(
+        self,
+        question: str,
+        *,
+        limit: int = 15,
+    ) -> list[TagCandidate]:
+        """질문에서 태그명이 안 잡힐 때, DESCRIPTION 키워드로 후보 태그를 찾는다."""
+        keywords = extract_keywords(question)
+        if not keywords:
+            return []
+        patterns = [f"%{keyword}%" for keyword in keywords]
+        rows = self.fdas_db.execute(
+            SEARCH_TAGS_BY_KEYWORDS_SQL,
+            {"patterns": patterns, "limit": limit},
+        ).mappings()
+        return [TagCandidate.model_validate(row) for row in rows]
 
     def load_from_recent_alarm(
         self,

@@ -40,6 +40,8 @@ class Settings(BaseSettings):
         validation_alias="RECENT_MAINTENANCE_LIMIT",
     )
     related_tag_limit: int = Field(default=20, validation_alias="RELATED_TAG_LIMIT")
+    # 자유질문(/ask)에서 한 번에 분석할 최대 태그 수(응답 지연·비용 상한).
+    ask_max_tags: int = Field(default=3, validation_alias="ASK_MAX_TAGS")
     manual_rag_enabled: bool = Field(
         default=False,
         validation_alias="MANUAL_RAG_ENABLED",

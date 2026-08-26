@@ -387,3 +387,10 @@ class TagCandidate(BaseModel):
     description: str | None = None
     system: str
     display_name: str | None = None
+
+
+class QuestionAnalysisResponse(BaseModel):
+    """자유질문(/ask) 응답. LLM이 선별한 태그별 개별 분석을 리스트로 담는다."""
+
+    question: str
+    analyses: list[AnalysisResponse] = Field(default_factory=list)
