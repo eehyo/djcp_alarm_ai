@@ -113,6 +113,19 @@ class MaintenanceInfo(BaseModel):
     team_note: str | None = None
 
 
+class LotoInfo(BaseModel):
+    id: int
+    loto_number: str
+    asset_id: int | None = None
+    work_name: str
+    selected_asset_name: str | None = None
+    attachment_place: str | None = None
+    lockout_device: str | None = None
+    status: str
+    install_dt: datetime | None = None
+    release_dt: datetime | None = None
+
+
 class TagKnowledge(BaseModel):
     tag_id: int
     tag_name: str
@@ -158,6 +171,7 @@ class AnalysisContext(BaseModel):
     related_tags: list[RelatedTag] = Field(default_factory=list)
     tag_knowledge: TagKnowledge | None = None
     mimic: list[MimicInfo] = Field(default_factory=list)
+    loto: list[LotoInfo] = Field(default_factory=list)
     manual_chunks: list[ManualChunk] = Field(default_factory=list)
 
 
@@ -235,6 +249,15 @@ class MimicResponse(BaseModel):
     file_size: int
 
 
+class LotoResponse(BaseModel):
+    loto_number: str
+    work_name: str
+    status: str
+    selected_asset_name: str | None = None
+    install_dt: datetime | None = None
+    release_dt: datetime | None = None
+
+
 class ManualResponse(BaseModel):
     source_name: str
     chunk_id: str
@@ -251,6 +274,7 @@ class AnalysisResponse(BaseModel):
     related_tags: list[RelatedTagResponse] = Field(default_factory=list)
     maintenance: list[MaintenanceResponse] = Field(default_factory=list)
     mimic: list[MimicResponse] = Field(default_factory=list)
+    loto: list[LotoResponse] = Field(default_factory=list)
     manual: list[ManualResponse] = Field(default_factory=list)
     metrics: AnalysisMetrics | None = None
 
@@ -325,6 +349,17 @@ class AnalysisResponse(BaseModel):
                     file_size=item.file_size,
                 )
                 for item in context.mimic
+            ],
+            loto=[
+                LotoResponse(
+                    loto_number=item.loto_number,
+                    work_name=item.work_name,
+                    status=item.status,
+                    selected_asset_name=item.selected_asset_name,
+                    install_dt=item.install_dt,
+                    release_dt=item.release_dt,
+                )
+                for item in context.loto
             ],
             manual=[
                 ManualResponse(

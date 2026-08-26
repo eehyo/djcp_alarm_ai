@@ -137,6 +137,7 @@ def _build_context_payload(
                     "team_note",
                 }
             },
+            "loto": {"__all__": {"id", "asset_id"}},
             "tag_knowledge": {
                 "tag_id",
                 "tag_name",

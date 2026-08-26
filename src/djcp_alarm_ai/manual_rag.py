@@ -29,8 +29,8 @@ MANUAL_SEARCH_SQL = text(
             mc.printed_page_end,
             mc.content,
             1 - (mc.embedding <=> CAST(:query_embedding AS vector)) AS similarity
-        FROM test.manual_chunk mc
-        JOIN test.manual_document md ON md.id = mc.document_id
+        FROM public.manual_chunk mc
+        JOIN public.manual_document md ON md.id = mc.document_id
         WHERE mc.is_active = TRUE
           AND mc.embedding IS NOT NULL
     )
@@ -41,11 +41,6 @@ MANUAL_SEARCH_SQL = text(
     LIMIT :candidate_limit
     """
 )
-
-
-@dataclass(frozen=True)
-class ManualIntent:
-    required: bool
 
 
 @dataclass(frozen=True)
@@ -157,39 +152,6 @@ class PgVectorManualRepository:
 
 
 class ManualRetrievalPolicy:
-    _manual_terms = (
-        "매뉴얼",
-        "절차",
-        "조치",
-        "대응",
-        "점검",
-        "trip",
-        "트립",
-        "비상",
-        "정전",
-        "black out",
-        "blackout",
-        "trouble",
-        "고장",
-        "이상",
-        "원인",
-        "왜",
-        "보호",
-        "조건",
-        "복구",
-        "재기동",
-        "shutdown",
-        "shut down",
-        "주의",
-        "안전",
-    )
-
-    def classify(self, question: str) -> ManualIntent:
-        normalized = _normalize_text(question)
-        return ManualIntent(
-            required=any(term in normalized for term in self._manual_terms)
-        )
-
     def select(
         self,
         *,
@@ -199,7 +161,6 @@ class ManualRetrievalPolicy:
         high_similarity: float,
         result_limit: int,
     ) -> list[ManualChunk]:
-        query_terms = _search_terms(query_text)
         query_equipment = _equipment_terms(query_text)
         ranked: list[tuple[float, ManualSearchCandidate]] = []
 
@@ -216,15 +177,13 @@ class ManualRetrievalPolicy:
             ):
                 continue
 
-            lexical_overlap = query_terms & _search_terms(candidate_text)
-            if candidate.similarity < high_similarity and not lexical_overlap:
+            equipment_overlap = query_equipment & candidate_equipment
+            if not equipment_overlap and candidate.similarity < high_similarity:
                 continue
 
             rank_score = candidate.similarity
-            if query_equipment & candidate_equipment:
+            if equipment_overlap:
                 rank_score += 0.04
-            if lexical_overlap:
-                rank_score += min(len(lexical_overlap), 3) * 0.01
             ranked.append((rank_score, candidate))
 
         selected: list[ManualChunk] = []
@@ -268,10 +227,6 @@ class VectorManualRetriever:
         self.policy = policy or ManualRetrievalPolicy()
 
     def retrieve(self, context: AnalysisContext) -> list[ManualChunk]:
-        intent = self.policy.classify(context.question)
-        if not intent.required:
-            return []
-
         query_text = build_manual_query(context)
         try:
             embedding = self.embedding_client.embed_one(query_text)
@@ -311,7 +266,6 @@ def build_manual_retriever(
 
 
 def build_manual_query(context: AnalysisContext) -> str:
-    knowledge = context.tag_knowledge
     parts = [
         ("질문", context.question),
         ("태그명", context.tag.tag_name),
@@ -319,20 +273,7 @@ def build_manual_query(context: AnalysisContext) -> str:
         ("태그 설명", context.tag.description),
         ("계통", context.tag.system),
         ("알람 메시지", context.alarm.message if context.alarm else None),
-        ("알람 설명", context.alarm.description if context.alarm else None),
         ("설비", context.asset.name if context.asset else None),
-        ("설비 설명", context.asset.description if context.asset else None),
-        (
-            "상위 설비",
-            " > ".join(
-                item.name or item.code or ""
-                for item in context.asset_path
-                if item.name or item.code
-            ),
-        ),
-        ("태그 설비 설명", knowledge.equipment_description if knowledge else None),
-        ("태그 의미", knowledge.tag_description if knowledge else None),
-        ("값 변화 의미", knowledge.value_change_meaning if knowledge else None),
     ]
     values: list[str] = []
     seen: set[str] = set()
@@ -349,30 +290,6 @@ def _normalize_text(value: str) -> str:
     return re.sub(r"\s+", " ", value.strip().lower())
 
 
-def _search_terms(value: str) -> set[str]:
-    stop_words = {
-        "그리고",
-        "또는",
-        "에서",
-        "으로",
-        "이것",
-        "해당",
-        "알려줘",
-        "설명",
-        "질문",
-        "태그",
-        "알람",
-        "현재",
-        "관련",
-        "상태",
-    }
-    return {
-        token
-        for token in re.findall(r"[0-9a-zA-Z가-힣]+", value.lower())
-        if len(token) >= 2 and token not in stop_words
-    }
-
-
 def _equipment_terms(value: str) -> set[str]:
     normalized = _normalize_text(value)
     aliases = {
@@ -385,6 +302,12 @@ def _equipment_terms(value: str) -> set[str]:
         "CWP": ("cwp", "냉각수펌프", "냉각수 펌프"),
         "AIR_COMP": ("air compressor", "air comp", "공기압축기"),
         "BLACK_OUT": ("black out", "blackout", "정전"),
+        "TURNING_GEAR": (
+            "turning gear",
+            "turninggear",
+            "터닝기어",
+            "터닝 기어",
+        ),
     }
     return {
         canonical

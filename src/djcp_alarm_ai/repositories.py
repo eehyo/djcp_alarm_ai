@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlalchemy import text
 from sqlalchemy.orm import Session
@@ -9,6 +9,7 @@ from djcp_alarm_ai.schemas import (
     AnalysisContext,
     AssetInfo,
     AssetPathItem,
+    LotoInfo,
     MaintenanceInfo,
     MimicInfo,
     RelatedTag,
@@ -17,6 +18,8 @@ from djcp_alarm_ai.schemas import (
     TagInfo,
     TagKnowledge,
 )
+
+_EPOCH = datetime.min.replace(tzinfo=timezone.utc)
 
 
 RECENT_ALARMS_SQL = text(
@@ -32,7 +35,7 @@ RECENT_ALARMS_SQL = text(
         av."MESSAGE" AS message,
         av."IS_ACK" AS is_ack,
         av."ACK_TIME" AS ack_time
-    FROM test."ALARM_VALUE" av
+    FROM public."ALARM_VALUE" av
     ORDER BY av."TIMESTAMP" DESC, av."TAG_ID"
     LIMIT :limit
     """
@@ -76,9 +79,9 @@ RECENT_ALARM_CONTEXT_SQL = text(
         ti."CLSD_MSG" AS clsd_msg,
         ti."OPEN_MSG" AS open_msg,
         NULLIF(BTRIM(ti."USED"), '') AS used
-    FROM test."ALARM_VALUE" av
-    JOIN test."TAG_INFO" ti ON ti."TAG_ID" = av."TAG_ID"
-    LEFT JOIN test."TAG_INFO_EXT" tie ON tie."TAG_ID" = ti."TAG_ID"
+    FROM public."ALARM_VALUE" av
+    JOIN public."TAG_INFO" ti ON ti."TAG_ID" = av."TAG_ID"
+    LEFT JOIN public."TAG_INFO_EXT" tie ON tie."TAG_ID" = ti."TAG_ID"
     WHERE av."TAG_ID" = :tag_id
       AND av."TIMESTAMP" = :timestamp
     """
@@ -122,9 +125,9 @@ HISTORY_ALARM_CONTEXT_SQL = text(
         ti."CLSD_MSG" AS clsd_msg,
         ti."OPEN_MSG" AS open_msg,
         NULLIF(BTRIM(ti."USED"), '') AS used
-    FROM test."ALARM_HIST" ah
-    JOIN test."TAG_INFO" ti ON ti."TAG_ID" = ah."TAG_ID"
-    LEFT JOIN test."TAG_INFO_EXT" tie ON tie."TAG_ID" = ti."TAG_ID"
+    FROM public."ALARM_HIST" ah
+    JOIN public."TAG_INFO" ti ON ti."TAG_ID" = ah."TAG_ID"
+    LEFT JOIN public."TAG_INFO_EXT" tie ON tie."TAG_ID" = ti."TAG_ID"
     WHERE ah."TAG_ID" = :tag_id
       AND ah."TIMESTAMP" = :timestamp
     ORDER BY ah."PRIORITY", ah."IS_ALM", ah."MESSAGE"
@@ -160,8 +163,8 @@ TAG_CONTEXT_SQL = text(
         ti."CLSD_MSG" AS clsd_msg,
         ti."OPEN_MSG" AS open_msg,
         NULLIF(BTRIM(ti."USED"), '') AS used
-    FROM test."TAG_INFO" ti
-    LEFT JOIN test."TAG_INFO_EXT" tie ON tie."TAG_ID" = ti."TAG_ID"
+    FROM public."TAG_INFO" ti
+    LEFT JOIN public."TAG_INFO_EXT" tie ON tie."TAG_ID" = ti."TAG_ID"
     WHERE ti."TAG_ID" = :tag_id
     """
 )
@@ -174,8 +177,8 @@ TAG_CANDIDATES_SQL = text(
         ti."DESCRIPTION" AS description,
         ti."SYSTEM" AS system,
         tie."DISPLAY_NAME" AS display_name
-    FROM test."TAG_INFO" ti
-    LEFT JOIN test."TAG_INFO_EXT" tie ON tie."TAG_ID" = ti."TAG_ID"
+    FROM public."TAG_INFO" ti
+    LEFT JOIN public."TAG_INFO_EXT" tie ON tie."TAG_ID" = ti."TAG_ID"
     WHERE ti."TAG_NAME" = :tag_name
     ORDER BY ti."TAG_ID"
     """
@@ -194,8 +197,8 @@ TAG_ASSETS_SQL = text(
         a.system_name,
         a.location,
         a.description
-    FROM test.asset_tag_link atl
-    JOIN test.asset a ON a.id = atl.asset_id
+    FROM public.asset_tag_link atl
+    JOIN public.asset a ON a.id = atl.asset_id
     WHERE atl.tag_id = :tag_id
     ORDER BY a.id
     """
@@ -212,7 +215,7 @@ ASSET_PATH_SQL = text(
             a.asset_type,
             0 AS depth,
             ARRAY[a.id] AS visited_ids
-        FROM test.asset a
+        FROM public.asset a
         WHERE a.id = :asset_id
 
         UNION ALL
@@ -225,7 +228,7 @@ ASSET_PATH_SQL = text(
             parent.asset_type,
             child.depth + 1,
             child.visited_ids || parent.id
-        FROM test.asset parent
+        FROM public.asset parent
         JOIN asset_path child ON child.parent_id = parent.id
         WHERE NOT parent.id = ANY(child.visited_ids)
     )
@@ -255,9 +258,45 @@ RECENT_MAINTENANCE_SQL = text(
         m.confirmer,
         m.work_description,
         m.team_note
-    FROM test.maintenance m
+    FROM public.maintenance m
     WHERE m.asset_id = :asset_id
     ORDER BY COALESCE(m.completed_at, m.scheduled_at, m.created_at) DESC
+    LIMIT :limit
+    """
+)
+
+_LOTO_COLUMNS = """
+        l.id,
+        l.loto_number,
+        l.asset_id,
+        l.work_name,
+        l.selected_asset_name,
+        l.attachment_place,
+        l.lockout_device,
+        l.status,
+        l.install_dt,
+        l.release_dt
+"""
+
+# LOTO 경로 ⓐ: 태그가 속한 설비(asset_id)에 발행된 loto
+LOTO_BY_ASSET_SQL = text(
+    f"""
+    SELECT{_LOTO_COLUMNS}
+    FROM public.loto l
+    WHERE l.asset_id = :asset_id
+    ORDER BY l.install_dt DESC NULLS LAST, l.id DESC
+    LIMIT :limit
+    """
+)
+
+# LOTO 경로 ⓑ: loto_tag.tag_code = TAG_NAME 으로 매핑된 loto
+LOTO_BY_TAG_CODE_SQL = text(
+    f"""
+    SELECT{_LOTO_COLUMNS}
+    FROM public.loto_tag lt
+    JOIN public.loto l ON l.id = lt.loto_id
+    WHERE lt.tag_code = :tag_name
+    ORDER BY l.install_dt DESC NULLS LAST, l.id DESC
     LIMIT :limit
     """
 )
@@ -275,7 +314,7 @@ RECENT_HISTORY_SQL = text(
         ah."MESSAGE" AS message,
         NULL::smallint AS is_ack,
         NULL::timestamptz AS ack_time
-    FROM test."ALARM_HIST" ah
+    FROM public."ALARM_HIST" ah
     WHERE ah."TAG_ID" = :tag_id
       AND (
         CAST(:selected_timestamp AS timestamptz) IS NULL
@@ -294,8 +333,8 @@ MIMIC_SQL = text(
         mf."LAST_WRITE_TICKS" AS last_write_ticks,
         mf."CHG_DATE" AS chg_date,
         mf."CHG_ID" AS chg_id
-    FROM test."MIMIC_FILE_TAG" mft
-    JOIN test."MIMIC_FILE" mf ON mf."FILE_PATH" = mft."FILE_PATH"
+    FROM public."MIMIC_FILE_TAG" mft
+    JOIN public."MIMIC_FILE" mf ON mf."FILE_PATH" = mft."FILE_PATH"
     WHERE mft."TAG_NAME" = :tag_name
     ORDER BY mf."FILE_PATH"
     """
@@ -317,7 +356,7 @@ TAG_KNOWLEDGE_SQL = text(
         d.action_guidance,
         d.failure_guidance,
         d.related_tags
-    FROM test.tag_description d
+    FROM public.tag_description d
     WHERE d.tag_id = :tag_id
     """
 )
@@ -332,8 +371,8 @@ RELATED_TAGS_SQL = text(
         tie."TAG_TYPE_CODE" AS tag_type_code,
         ti."SIG_TYPE" AS sig_type,
         ti."ENG_UNIT" AS eng_unit
-    FROM test."TAG_INFO" ti
-    LEFT JOIN test."TAG_INFO_EXT" tie ON tie."TAG_ID" = ti."TAG_ID"
+    FROM public."TAG_INFO" ti
+    LEFT JOIN public."TAG_INFO_EXT" tie ON tie."TAG_ID" = ti."TAG_ID"
     WHERE ti."TAG_NAME" = ANY(CAST(:tag_names AS varchar[]))
     ORDER BY ti."TAG_NAME", ti."TAG_ID"
     """
@@ -341,19 +380,32 @@ RELATED_TAGS_SQL = text(
 
 
 class OperationalRepository:
-    def __init__(self, db: Session, settings: Settings | None = None) -> None:
-        self.db = db
+    """태그·알람·화면은 FDAS DB, 설비·정비·LOTO는 FDAS_AMS DB에서 조회한다.
+
+    두 DB가 물리적으로 분리되어 단일 SQL JOIN이 불가능하므로,
+    FDAS에서 태그·알람을 조회한 뒤 얻은 TAG_ID/TAG_NAME으로 AMS를 조회하여
+    애플리케이션 레벨에서 컨텍스트를 조립한다.
+    """
+
+    def __init__(
+        self,
+        fdas_db: Session,
+        ams_db: Session,
+        settings: Settings | None = None,
+    ) -> None:
+        self.fdas_db = fdas_db
+        self.ams_db = ams_db
         self.settings = settings or get_settings()
 
     def list_recent_alarms(self) -> list[AlarmInfo]:
-        rows = self.db.execute(
+        rows = self.fdas_db.execute(
             RECENT_ALARMS_SQL,
             {"limit": self.settings.recent_alarm_limit},
         ).mappings()
         return [AlarmInfo.model_validate(row) for row in rows]
 
     def find_tag_candidates(self, tag_name: str) -> list[TagCandidate]:
-        rows = self.db.execute(TAG_CANDIDATES_SQL, {"tag_name": tag_name}).mappings()
+        rows = self.fdas_db.execute(TAG_CANDIDATES_SQL, {"tag_name": tag_name}).mappings()
         return [TagCandidate.model_validate(row) for row in rows]
 
     def load_from_recent_alarm(
@@ -362,7 +414,7 @@ class OperationalRepository:
         timestamp: datetime,
         question: str,
     ) -> AnalysisContext | None:
-        row = self.db.execute(
+        row = self.fdas_db.execute(
             RECENT_ALARM_CONTEXT_SQL,
             {"tag_id": tag_id, "timestamp": timestamp},
         ).mappings().one_or_none()
@@ -374,35 +426,41 @@ class OperationalRepository:
         timestamp: datetime,
         question: str,
     ) -> AnalysisContext | None:
-        row = self.db.execute(
+        row = self.fdas_db.execute(
             HISTORY_ALARM_CONTEXT_SQL,
             {"tag_id": tag_id, "timestamp": timestamp},
         ).mappings().one_or_none()
         return self._build_context(row, question=question) if row else None
 
     def load_from_tag(self, tag_id: int, question: str) -> AnalysisContext | None:
-        row = self.db.execute(TAG_CONTEXT_SQL, {"tag_id": tag_id}).mappings().one_or_none()
+        row = self.fdas_db.execute(
+            TAG_CONTEXT_SQL, {"tag_id": tag_id}
+        ).mappings().one_or_none()
         return self._build_context(row, question=question) if row else None
 
     def _build_context(self, row, *, question: str) -> AnalysisContext:
         tag = TagInfo.model_validate(row)
         alarm = _alarm_from_context_row(row)
 
-        asset_rows = list(self.db.execute(TAG_ASSETS_SQL, {"tag_id": tag.tag_id}).mappings())
+        # 설비·정비·LOTO는 FDAS_AMS DB에서 TAG_ID/TAG_NAME 기준으로 조회한다.
+        asset_rows = list(
+            self.ams_db.execute(TAG_ASSETS_SQL, {"tag_id": tag.tag_id}).mappings()
+        )
         asset = AssetInfo.model_validate(asset_rows[0]) if asset_rows else None
         asset_path: list[AssetPathItem] = []
         maintenance: list[MaintenanceInfo] = []
+        loto: list[LotoInfo] = []
         if asset is not None:
             asset_path = [
                 AssetPathItem.model_validate(item)
-                for item in self.db.execute(
+                for item in self.ams_db.execute(
                     ASSET_PATH_SQL,
                     {"asset_id": asset.id},
                 ).mappings()
             ]
             maintenance = [
                 MaintenanceInfo.model_validate(item)
-                for item in self.db.execute(
+                for item in self.ams_db.execute(
                     RECENT_MAINTENANCE_SQL,
                     {
                         "asset_id": asset.id,
@@ -410,10 +468,11 @@ class OperationalRepository:
                     },
                 ).mappings()
             ]
+        loto = self._load_loto(asset_id=asset.id if asset else None, tag_name=tag.tag_name)
 
         history = [
             AlarmInfo.model_validate(item)
-            for item in self.db.execute(
+            for item in self.fdas_db.execute(
                 RECENT_HISTORY_SQL,
                 {
                     "tag_id": tag.tag_id,
@@ -424,7 +483,9 @@ class OperationalRepository:
         ]
         mimic = [
             MimicInfo.model_validate(item)
-            for item in self.db.execute(MIMIC_SQL, {"tag_name": tag.tag_name}).mappings()
+            for item in self.fdas_db.execute(
+                MIMIC_SQL, {"tag_name": tag.tag_name}
+            ).mappings()
         ]
 
         return AnalysisContext(
@@ -436,15 +497,49 @@ class OperationalRepository:
             recent_alarms=history,
             recent_maintenance=maintenance,
             mimic=mimic,
+            loto=loto,
+        )
+
+    def _load_loto(self, *, asset_id: int | None, tag_name: str) -> list[LotoInfo]:
+        """LOTO 2경로를 합집합으로 조회한다.
+
+        ⓐ asset 경로 : 태그가 속한 설비(asset_id)에 발행된 loto
+        ⓑ tag_code 경로: loto_tag.tag_code = TAG_NAME 으로 매핑된 loto
+        두 결과를 loto.id 기준으로 dedupe, install_dt 내림차순 정렬한다.
+        """
+        by_id: dict[int, LotoInfo] = {}
+        limit = self.settings.recent_maintenance_limit
+        if asset_id is not None:
+            for item in self.ams_db.execute(
+                LOTO_BY_ASSET_SQL, {"asset_id": asset_id, "limit": limit}
+            ).mappings():
+                loto = LotoInfo.model_validate(item)
+                by_id[loto.id] = loto
+        for item in self.ams_db.execute(
+            LOTO_BY_TAG_CODE_SQL, {"tag_name": tag_name, "limit": limit}
+        ).mappings():
+            loto = LotoInfo.model_validate(item)
+            by_id.setdefault(loto.id, loto)
+
+        return sorted(
+            by_id.values(),
+            key=lambda x: x.install_dt or _EPOCH,
+            reverse=True,
         )
 
 
 class DescriptionRepository:
-    def __init__(self, db: Session) -> None:
-        self.db = db
+    """태그 지식(tag_description)은 AI DB(djcp_alarm_ai)에서,
+    관련 태그 해석(TAG_INFO)은 FDAS DB에서 조회한다."""
+
+    def __init__(self, ai_db: Session, fdas_db: Session) -> None:
+        self.ai_db = ai_db
+        self.fdas_db = fdas_db
 
     def get_by_tag_id(self, tag_id: int) -> TagKnowledge | None:
-        row = self.db.execute(TAG_KNOWLEDGE_SQL, {"tag_id": tag_id}).mappings().one_or_none()
+        row = self.ai_db.execute(
+            TAG_KNOWLEDGE_SQL, {"tag_id": tag_id}
+        ).mappings().one_or_none()
         if row is None:
             return None
         payload = dict(row)
@@ -461,7 +556,7 @@ class DescriptionRepository:
         if not references:
             return []
 
-        rows = self.db.execute(
+        rows = self.fdas_db.execute(
             RELATED_TAGS_SQL,
             {"tag_names": [reference.tag_name for reference in references]},
         ).mappings()

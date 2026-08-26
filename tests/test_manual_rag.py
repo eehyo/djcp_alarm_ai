@@ -75,16 +75,6 @@ def _candidate(
     )
 
 
-def test_manual_intent_only_enables_operational_questions() -> None:
-    policy = ManualRetrievalPolicy()
-
-    assert not policy.classify("현재 값과 단위를 알려줘.").required
-    assert not policy.classify("이 태그가 어느 화면에 있어?").required
-    assert policy.classify("이 알람이 TBN Trip 조건인지 알려줘.").required
-    assert policy.classify("정전 시 비상조치 절차를 알려줘.").required
-    assert policy.classify("이 고장의 원인과 조치를 알려줘.").required
-
-
 def test_manual_selection_requires_relevance_and_returns_at_most_two() -> None:
     policy = ManualRetrievalPolicy()
     query = "터빈 TBN 윤활유 압력 저하 Trip 조건"
@@ -124,8 +114,8 @@ def test_manual_selection_requires_relevance_and_returns_at_most_two() -> None:
     selected = policy.select(
         query_text=query,
         candidates=candidates,
-        min_similarity=0.70,
-        high_similarity=0.82,
+        min_similarity=0.60,
+        high_similarity=0.70,
         result_limit=10,
     )
 
@@ -138,7 +128,7 @@ def test_manual_selection_requires_relevance_and_returns_at_most_two() -> None:
     assert "gen-voltage" not in {item.chunk_id for item in selected}
 
 
-def test_manual_retriever_skips_embedding_for_non_manual_question() -> None:
+def test_manual_retriever_searches_even_for_non_manual_question() -> None:
     class FakeEmbeddingClient:
         calls = 0
 
@@ -164,17 +154,75 @@ def test_manual_retriever_skips_embedding_for_non_manual_question() -> None:
     result = retriever.retrieve(_context("현재 값과 단위를 알려줘."))
 
     assert result == []
-    assert embedding_client.calls == 0
-    assert repository.calls == 0
+    assert embedding_client.calls == 1
+    assert repository.calls == 1
 
 
-def test_manual_query_uses_context_without_maintenance_or_mimic_noise() -> None:
+def test_manual_query_uses_compact_context_without_long_knowledge_noise() -> None:
     query = build_manual_query(_context("윤활유 압력 저하 원인을 알려줘."))
 
     assert "TBN_LO_PRESS" in query
     assert "터빈 윤활유 압력" in query
     assert "Turbine Lubrication Oil System" in query
-    assert "압력 저하는" in query
+    assert "터빈 베어링에 공급되는" not in query
+    assert "압력 저하는" not in query
+
+
+def test_manual_selection_accepts_equipment_match_at_base_threshold() -> None:
+    selected = ManualRetrievalPolicy().select(
+        query_text="터닝기어 자동 체결 실패",
+        candidates=[
+            _candidate(
+                "turning-gear",
+                "Turning Gear engage fail 시",
+                "Local에서 수동으로 Turning Gear를 engage한다.",
+                0.62,
+            )
+        ],
+        min_similarity=0.60,
+        high_similarity=0.70,
+        result_limit=2,
+    )
+
+    assert [item.chunk_id for item in selected] == ["turning-gear"]
+
+
+def test_manual_selection_rejects_unknown_equipment_below_high_threshold() -> None:
+    selected = ManualRetrievalPolicy().select(
+        query_text="LNG 누출 시 비상조치 절차를 알려줘.",
+        candidates=[
+            _candidate(
+                "black-out",
+                "정상운전중 BLACK OUT시 조치사항",
+                "전원 복구 후 주요 회전기기를 확인한다.",
+                0.65,
+            )
+        ],
+        min_similarity=0.60,
+        high_similarity=0.70,
+        result_limit=2,
+    )
+
+    assert selected == []
+
+
+def test_manual_selection_accepts_high_score_without_known_equipment() -> None:
+    selected = ManualRetrievalPolicy().select(
+        query_text="회전체 부속 계통 상태를 확인해줘.",
+        candidates=[
+            _candidate(
+                "seal-steam",
+                "밀봉 증기 System",
+                "밀봉 증기 압력과 진공 상태를 점검한다.",
+                0.72,
+            )
+        ],
+        min_similarity=0.60,
+        high_similarity=0.70,
+        result_limit=2,
+    )
+
+    assert [item.chunk_id for item in selected] == ["seal-steam"]
 
 
 def test_manual_context_is_sent_to_llm_but_score_is_not_exposed() -> None:
