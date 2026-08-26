@@ -43,16 +43,3 @@ def get_db_ai() -> Generator[Session, None, None]:
         yield db
     finally:
         db.close()
-
-
-# --- 레거시 호환 (이후 Phase에서 각 소비처를 3-DB로 이관하며 제거 예정) ---
-engine = create_engine(settings.database_url, pool_pre_ping=True)
-SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
-
-
-def get_db() -> Generator[Session, None, None]:
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()

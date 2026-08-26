@@ -11,7 +11,7 @@ from urllib.request import Request, urlopen
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 
-from djcp_alarm_ai.db import SessionLocal
+from djcp_alarm_ai.db import FdasSession
 
 
 REQUIRED_TOP_LEVEL_MEMBERS = {
@@ -140,7 +140,7 @@ LATEST_HISTORY_SQL = text(
         "TAG_ID" AS tag_id,
         "TIMESTAMP" AS timestamp,
         "IS_ALM" AS is_alm
-    FROM test."ALARM_HIST"
+    FROM public."ALARM_HIST"
     ORDER BY "TIMESTAMP" DESC, "TAG_ID"
     LIMIT 1
     """
@@ -302,7 +302,7 @@ def _execute_tag_scenario(
 
 def _execute_history_scenario(base_url: str, timeout: float) -> dict[str, Any]:
     try:
-        with SessionLocal() as db:
+        with FdasSession() as db:
             row = db.execute(LATEST_HISTORY_SQL).mappings().one_or_none()
     except SQLAlchemyError as exc:
         return _failed_case(

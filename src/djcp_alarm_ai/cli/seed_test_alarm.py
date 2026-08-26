@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 
 from sqlalchemy import text
 
-from djcp_alarm_ai.db import SessionLocal
+from djcp_alarm_ai.db import FdasSession
 
 
 TAG_SQL = text(
@@ -13,14 +13,14 @@ TAG_SQL = text(
         "TAG_ID" AS tag_id,
         "TAG_NAME" AS tag_name,
         "DESCRIPTION" AS description
-    FROM test."TAG_INFO"
+    FROM public."TAG_INFO"
     WHERE "TAG_ID" = :tag_id
     """
 )
 
 INSERT_VALUE_SQL = text(
     """
-    INSERT INTO test."ALARM_VALUE" (
+    INSERT INTO public."ALARM_VALUE" (
         "TIMESTAMP", "TAG_ID", "TAG_NAME", "DESCRIPTION",
         "PRIORITY", "VALUE", "IS_ALM", "MESSAGE"
     ) VALUES (
@@ -32,7 +32,7 @@ INSERT_VALUE_SQL = text(
 
 INSERT_HIST_SQL = text(
     """
-    INSERT INTO test."ALARM_HIST" (
+    INSERT INTO public."ALARM_HIST" (
         "TIMESTAMP", "TAG_ID", "TAG_NAME", "DESCRIPTION",
         "PRIORITY", "VALUE", "IS_ALM", "MESSAGE"
     ) VALUES (
@@ -46,8 +46,8 @@ INSERT_HIST_SQL = text(
 def main() -> None:
     parser = argparse.ArgumentParser(
         description=(
-            "Insert one synthetic event into test.ALARM_VALUE and test.ALARM_HIST "
-            "using an existing test.TAG_INFO tag."
+            "Insert one synthetic event into public.ALARM_VALUE and public.ALARM_HIST "
+            "using an existing public.TAG_INFO tag."
         )
     )
     parser.add_argument("--tag-id", type=int, required=True)
@@ -69,7 +69,7 @@ def main() -> None:
     if len(args.message) > 50:
         parser.error("--message must be at most 50 characters")
 
-    db = SessionLocal()
+    db = FdasSession()
     try:
         tag = db.execute(TAG_SQL, {"tag_id": args.tag_id}).mappings().one_or_none()
         if tag is None:
@@ -92,7 +92,7 @@ def main() -> None:
 
         if not args.dry_run:
             # trim_alarm_value() uses an unqualified ALARM_VALUE reference.
-            db.execute(text("SET LOCAL search_path TO test, public"))
+            db.execute(text("SET LOCAL search_path TO public"))
             db.execute(INSERT_VALUE_SQL, payload)
             db.execute(INSERT_HIST_SQL, payload)
             db.commit()

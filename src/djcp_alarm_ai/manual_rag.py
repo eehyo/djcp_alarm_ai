@@ -16,8 +16,10 @@ logger = logging.getLogger(__name__)
 
 MAX_MANUAL_RESULTS = 2
 
+_AI_SCHEMA = get_settings().ai_schema
+
 MANUAL_SEARCH_SQL = text(
-    """
+    f"""
     WITH ranked AS (
         SELECT
             md.source_name,
@@ -29,8 +31,8 @@ MANUAL_SEARCH_SQL = text(
             mc.printed_page_end,
             mc.content,
             1 - (mc.embedding <=> CAST(:query_embedding AS vector)) AS similarity
-        FROM public.manual_chunk mc
-        JOIN public.manual_document md ON md.id = mc.document_id
+        FROM {_AI_SCHEMA}.manual_chunk mc
+        JOIN {_AI_SCHEMA}.manual_document md ON md.id = mc.document_id
         WHERE mc.is_active = TRUE
           AND mc.embedding IS NOT NULL
     )

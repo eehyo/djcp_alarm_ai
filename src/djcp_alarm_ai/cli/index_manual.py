@@ -7,7 +7,7 @@ from pathlib import Path
 from sqlalchemy import text
 
 from djcp_alarm_ai.config import get_settings
-from djcp_alarm_ai.db import SessionLocal
+from djcp_alarm_ai.db import AiSession
 from djcp_alarm_ai.manual_rag import OpenAICompatibleEmbeddingClient
 
 
@@ -20,7 +20,7 @@ DEFAULT_INPUT = (
 
 UPSERT_DOCUMENT_SQL = text(
     """
-    INSERT INTO test.manual_document (
+    INSERT INTO public.manual_document (
         source_name, file_hash, document_version, parse_version
     )
     VALUES (:source_name, :file_hash, :document_version, :parse_version)
@@ -33,9 +33,9 @@ UPSERT_DOCUMENT_SQL = text(
 
 DEACTIVATE_SOURCE_SQL = text(
     """
-    UPDATE test.manual_chunk mc
+    UPDATE public.manual_chunk mc
     SET is_active = FALSE, updated_at = NOW()
-    FROM test.manual_document md
+    FROM public.manual_document md
     WHERE mc.document_id = md.id
       AND md.source_name = :source_name
     """
@@ -44,14 +44,14 @@ DEACTIVATE_SOURCE_SQL = text(
 EXISTING_CHUNK_SQL = text(
     """
     SELECT content_hash, embedding_model, embedding IS NOT NULL AS has_embedding
-    FROM test.manual_chunk
+    FROM public.manual_chunk
     WHERE chunk_key = :chunk_key
     """
 )
 
 REFRESH_CHUNK_SQL = text(
     """
-    UPDATE test.manual_chunk
+    UPDATE public.manual_chunk
     SET
         document_id = :document_id,
         parent_chunk_key = :parent_chunk_key,
@@ -70,7 +70,7 @@ REFRESH_CHUNK_SQL = text(
 
 UPSERT_CHUNK_SQL = text(
     """
-    INSERT INTO test.manual_chunk (
+    INSERT INTO public.manual_chunk (
         document_id,
         chunk_key,
         parent_chunk_key,
@@ -196,7 +196,7 @@ def index_records(
     embedded = 0
     reused = 0
 
-    with SessionLocal() as db, db.begin():
+    with AiSession() as db, db.begin():
         document_id = db.execute(
             UPSERT_DOCUMENT_SQL,
             {

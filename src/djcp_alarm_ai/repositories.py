@@ -4,6 +4,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from djcp_alarm_ai.config import Settings, get_settings
+from djcp_alarm_ai.tag_extractor import extract_tag_tokens
 from djcp_alarm_ai.schemas import (
     AlarmInfo,
     AnalysisContext,
@@ -184,6 +185,21 @@ TAG_CANDIDATES_SQL = text(
     """
 )
 
+RESOLVE_TAGS_BY_NAMES_SQL = text(
+    """
+    SELECT
+        ti."TAG_ID" AS tag_id,
+        ti."TAG_NAME" AS tag_name,
+        ti."DESCRIPTION" AS description,
+        ti."SYSTEM" AS system,
+        tie."DISPLAY_NAME" AS display_name
+    FROM public."TAG_INFO" ti
+    LEFT JOIN public."TAG_INFO_EXT" tie ON tie."TAG_ID" = ti."TAG_ID"
+    WHERE upper(ti."TAG_NAME") = ANY(CAST(:names AS varchar[]))
+    ORDER BY ti."TAG_ID"
+    """
+)
+
 TAG_ASSETS_SQL = text(
     """
     SELECT
@@ -340,8 +356,10 @@ MIMIC_SQL = text(
     """
 )
 
+_AI_SCHEMA = get_settings().ai_schema
+
 TAG_KNOWLEDGE_SQL = text(
-    """
+    f"""
     SELECT
         d.tag_id,
         d.tag_name,
@@ -356,7 +374,7 @@ TAG_KNOWLEDGE_SQL = text(
         d.action_guidance,
         d.failure_guidance,
         d.related_tags
-    FROM public.tag_description d
+    FROM {_AI_SCHEMA}.tag_description d
     WHERE d.tag_id = :tag_id
     """
 )
@@ -407,6 +425,22 @@ class OperationalRepository:
     def find_tag_candidates(self, tag_name: str) -> list[TagCandidate]:
         rows = self.fdas_db.execute(TAG_CANDIDATES_SQL, {"tag_name": tag_name}).mappings()
         return [TagCandidate.model_validate(row) for row in rows]
+
+    def find_tags_in_text(self, question: str) -> list[TagCandidate]:
+        """자유질문에서 태그 후보를 추출해 FDAS.TAG_INFO로 검증한 실태그 목록을 반환한다."""
+        tokens = extract_tag_tokens(question)
+        if not tokens:
+            return []
+        rows = self.fdas_db.execute(
+            RESOLVE_TAGS_BY_NAMES_SQL,
+            {"names": [token.upper() for token in tokens]},
+        ).mappings()
+        # tag_id 기준 중복 제거(여러 토큰이 같은 태그를 가리킬 수 있음).
+        by_id: dict[int, TagCandidate] = {}
+        for row in rows:
+            candidate = TagCandidate.model_validate(row)
+            by_id.setdefault(candidate.tag_id, candidate)
+        return list(by_id.values())
 
     def load_from_recent_alarm(
         self,

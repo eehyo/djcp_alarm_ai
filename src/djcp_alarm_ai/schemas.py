@@ -15,6 +15,12 @@ class TagAnalysisRequest(BaseModel):
     question: str = "이 태그의 상태와 원인을 설명해줘."
 
 
+class QuestionAnalysisRequest(BaseModel):
+    """태그를 지정하지 않고 질문 문장 안의 태그를 자동 인식하는 요청."""
+
+    question: str
+
+
 class AlarmInfo(BaseModel):
     timestamp: datetime
     tag_id: int

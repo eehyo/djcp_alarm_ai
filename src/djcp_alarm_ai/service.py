@@ -76,6 +76,19 @@ class AlarmAnalysisService:
             raise NotFoundError(f"tag not found: {candidates[0].tag_id}")
         return self._analyze(context, started)
 
+    def analyze_question(self, question: str) -> AnalysisResponse:
+        """태그를 따로 지정하지 않은 자유질문에서 태그를 인식해 분석한다."""
+        started = perf_counter()
+        candidates = self.operational_repository.find_tags_in_text(question)
+        if not candidates:
+            raise NotFoundError("질문에서 유효한 태그를 찾지 못했습니다.")
+        if len(candidates) > 1:
+            raise AmbiguousTagError(question, candidates)
+        context = self.operational_repository.load_from_tag(candidates[0].tag_id, question)
+        if context is None:
+            raise NotFoundError(f"tag not found: {candidates[0].tag_id}")
+        return self._analyze(context, started)
+
     def _analyze(self, context: AnalysisContext, started: float | None = None) -> AnalysisResponse:
         started = perf_counter() if started is None else started
         context.tag_knowledge = self.description_repository.get_by_tag_id(context.tag.tag_id)
