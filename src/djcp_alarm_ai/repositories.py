@@ -22,6 +22,9 @@ from djcp_alarm_ai.schemas import (
 
 _EPOCH = datetime.min.replace(tzinfo=timezone.utc)
 
+# 설비당 LOTO는 수십 건일 수 있어, 요약 집계를 위해 넉넉히 전부 조회한다.
+_LOTO_FETCH_LIMIT = 500
+
 
 RECENT_ALARMS_SQL = text(
     """
@@ -573,9 +576,11 @@ class OperationalRepository:
         ⓐ asset 경로 : 태그가 속한 설비(asset_id)에 발행된 loto
         ⓑ tag_code 경로: loto_tag.tag_code = TAG_NAME 으로 매핑된 loto
         두 결과를 loto.id 기준으로 dedupe, install_dt 내림차순 정렬한다.
+        설비당 loto가 많을 수 있어(수십 건) 전체를 조회한다. 요약(총계·InUse/Returned)은
+        상위 계층에서 이 전체 목록으로 계산하고, LLM에는 요약만 전달한다.
         """
         by_id: dict[int, LotoInfo] = {}
-        limit = self.settings.recent_maintenance_limit
+        limit = _LOTO_FETCH_LIMIT
         if asset_id is not None:
             for item in self.ams_db.execute(
                 LOTO_BY_ASSET_SQL, {"asset_id": asset_id, "limit": limit}

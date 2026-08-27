@@ -123,6 +123,32 @@ def _screen_name(file_path: str | None) -> str:
     return file_path.replace("\\", "/").rstrip("/").split("/")[-1].strip()
 
 
+def _loto_summary(loto: list) -> dict:
+    """LOTO 목록을 집계 요약으로 변환한다(총계·InUse/Returned·최근 3건).
+
+    설비당 loto가 수십 건일 수 있어 원시 나열은 LLM 입력을 키우고 혼동을 유발한다.
+    전체 집계로 상태를 정확히 전달하고, 구체 예시는 최신 3건만 raw로 넣는다.
+    (loto는 install_dt 내림차순으로 이미 정렬되어 있다.)
+    """
+    in_use = sum(1 for item in loto if item.status == "InUse")
+    returned = sum(1 for item in loto if item.status == "Returned")
+    recent = [
+        {
+            "loto_number": item.loto_number,
+            "work_name": item.work_name,
+            "status": item.status,
+            "install_dt": item.install_dt.isoformat() if item.install_dt else None,
+        }
+        for item in loto[:3]
+    ]
+    return {
+        "total": len(loto),
+        "in_use": in_use,
+        "returned": returned,
+        "recent": recent,
+    }
+
+
 def _build_context_payload(
     context: AnalysisContext,
     *,
@@ -146,7 +172,8 @@ def _build_context_payload(
                     "confirmer",
                 }
             },
-            "loto": {"__all__": {"id", "asset_id"}},
+            # loto 원시 목록은 제외하고, 아래에서 집계 요약(loto_summary)만 전달한다.
+            "loto": True,
             "tag_knowledge": {
                 "tag_id",
                 "tag_name",
@@ -163,6 +190,9 @@ def _build_context_payload(
     screens = [name for name in screens if name]
     if screens:
         payload["mimic_screens"] = screens
+    # LOTO는 설비당 수십 건일 수 있어 원시 나열 대신 집계 요약을 전달한다.
+    if context.loto:
+        payload["loto_summary"] = _loto_summary(context.loto)
     if "manual_chunks" in payload:
         payload["manual_chunks"] = payload["manual_chunks"][:2]
     if no_think_question:

@@ -39,10 +39,12 @@
   사실로 언급할 수 있습니다. 특히 알람·현재 상태와 시점상 관련될 수 있으면
   "해당 설비에 ~정비가 진행되었다"처럼 기록된 사실로만 서술하고 원인으로 단정하지
   않습니다. 정비 이력이 없으면 정비가 없었다고 단정하지 않습니다.
-- `loto`가 있으면 설비/태그에 발행된 LOTO의 작업명·상태·설치(install_dt)·해제(release_dt)
-  이력을 사실로 서술할 수 있습니다. `status`가 `InUse`면 현재 설치(점검 중), `Returned`면
-  해제된 상태입니다. "LOTO가 전부 해제된 상태" 같은 표현은 입력의 모든 loto가 Returned일
-  때만 사용합니다.
+- `loto_summary`가 있으면 그 설비의 LOTO 현황을 사실로 서술할 수 있습니다.
+  `total`(전체 건수), `in_use`(현재 설치·점검 중), `returned`(해제됨), `recent`(최신 몇 건의
+  loto_number/work_name/status/install_dt)로 구성됩니다. 현황 수치는 `total`/`in_use`/`returned`를
+  그대로 인용하고, 구체 예시는 `recent`만 사용합니다(전체를 나열하지 마세요).
+  "LOTO가 전부 해제된 상태"는 `in_use`가 0일 때만 사용합니다. `recent`에 없는 개별 LOTO를
+  지어내지 않습니다.
 - 설비·정비·LOTO에 기록된 사실에 근거한 서술은 `basis`를 `DATABASE`로 표시합니다.
   단, 정비/LOTO가 알람의 원인이라고 단정하는 것은 근거가 없으면 `INFERENCE`로만
   가능성 수준에서 표현합니다.
