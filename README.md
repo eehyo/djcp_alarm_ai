@@ -78,7 +78,7 @@ LLM_MAX_TOKENS=2048            # 답변 JSON이 잘리지 않도록 충분히 �
 
 RECENT_ALARM_LIMIT=10
 RECENT_MAINTENANCE_LIMIT=5
-RELATED_TAG_LIMIT=20
+RELATED_TAG_LIMIT=10
 ASK_MAX_TAGS=3                 # /ask에서 한 번에 분석할 최대 태그 수
 
 MANUAL_RAG_ENABLED=true
