@@ -6,14 +6,9 @@ from pathlib import Path
 
 
 PROJECT_ROOT = Path(__file__).parents[3]
-DEFAULT_INPUT = (
-    PROJECT_ROOT / "data" / "tg_manual" / "tg_manual_pages_003_015.jsonl"
-)
+DEFAULT_INPUT = PROJECT_ROOT / "data" / "tg_manual" / "tg_manual_source.jsonl"
 DEFAULT_OUTPUT = (
-    PROJECT_ROOT
-    / "data"
-    / "tg_manual"
-    / "tg_manual_search_chunks_003_015.jsonl"
+    PROJECT_ROOT / "data" / "tg_manual" / "tg_manual_search_chunks.jsonl"
 )
 MAX_CHUNK_CHARS = 1200
 
@@ -63,29 +58,104 @@ def write_jsonl(path: Path, chunks: list[dict]) -> None:
 
 
 def _split_long_record(record: dict, *, max_chunk_chars: int) -> list[dict]:
-    sections = _structural_sections(record["content"])
-    if not sections:
+    prefix_lines, sections = _structural_sections(record["content"])
+
+    segments: list[tuple[str | None, list[str]]] = []
+    if _trim_blank_lines(prefix_lines):
+        segments.append((None, prefix_lines))
+    segments.extend((section.heading, list(section.lines)) for section in sections)
+    if not segments:  # 구조적 소제목이 전혀 없는 장문
+        segments = [(None, record["content"].splitlines())]
+
+    produced: list[tuple[str, str]] = []
+    for subheading, lines in segments:
+        title = (
+            _join_title(record["title"], subheading)
+            if subheading
+            else record["title"]
+        )
+        body = "\n".join(_trim_blank_lines(lines)).strip()
+        if not body:
+            continue
+        if len(body) <= max_chunk_chars:
+            produced.append((title, body))
+            continue
+        for window in _split_by_lines(
+            lines,
+            max_chunk_chars=max_chunk_chars,
+            chunk_id=record["chunk_id"],
+        ):
+            produced.append((title, window))
+
+    if not produced:
         return _keep_or_reject(record, max_chunk_chars=max_chunk_chars)
 
-    chunks = [
+    return [
         _child_record(
             record,
             chunk_id=f"{record['chunk_id']}-s{index:02d}",
-            title=_join_title(record["title"], section.heading),
-            content="\n".join(section.lines).strip(),
+            title=title,
+            content=content,
         )
-        for index, section in enumerate(sections, start=1)
+        for index, (title, content) in enumerate(produced, start=1)
     ]
-    for chunk in chunks:
-        if len(chunk["content"]) > max_chunk_chars:
+
+
+def _split_by_lines(
+    lines: list[str],
+    *,
+    max_chunk_chars: int,
+    chunk_id: str,
+) -> list[str]:
+    windows: list[str] = []
+    current: list[str] = []
+    current_len = 0
+    for raw_line in lines:
+        for piece in _atomic_pieces(
+            raw_line.strip(),
+            max_chunk_chars=max_chunk_chars,
+            chunk_id=chunk_id,
+        ):
+            addition = len(piece) + (1 if current else 0)
+            if current and current_len + addition > max_chunk_chars:
+                windows.append("\n".join(current))
+                current = [piece]
+                current_len = len(piece)
+            else:
+                current.append(piece)
+                current_len += addition
+    if current:
+        windows.append("\n".join(current))
+    return windows
+
+
+def _atomic_pieces(
+    line: str,
+    *,
+    max_chunk_chars: int,
+    chunk_id: str,
+) -> list[str]:
+    if not line:
+        return []
+    if len(line) <= max_chunk_chars:
+        return [line]
+    pieces = [
+        piece.strip()
+        for piece in re.split(r"(?<=[.다요])\s+", line)
+        if piece.strip()
+    ]
+    for piece in pieces:
+        if len(piece) > max_chunk_chars:
             raise ValueError(
-                f"structural chunk exceeds {max_chunk_chars} chars: "
-                f"{chunk['chunk_id']}"
+                f"chunk exceeds {max_chunk_chars} chars without a safe heading: "
+                f"{chunk_id}"
             )
-    return chunks
+    return pieces
 
 
-def _structural_sections(content: str) -> list[TextSection]:
+def _structural_sections(
+    content: str,
+) -> tuple[list[str], list[TextSection]]:
     sections: list[TextSection] = []
     prefix_lines: list[str] = []
     current_group: str | None = None
@@ -127,10 +197,8 @@ def _structural_sections(content: str) -> list[TextSection]:
     flush()
 
     if not found_heading:
-        return []
-    if _trim_blank_lines(prefix_lines):
-        raise ValueError("content exists before the first structural heading")
-    return sections
+        return [], []
+    return prefix_lines, sections
 
 
 def _is_standalone_heading(line: str, next_line: str | None) -> bool:

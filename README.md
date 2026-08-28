@@ -138,17 +138,19 @@ psql "$PSQL_URL_AI" -f data/lab_handover/tag_description.sql
 psql "$PSQL_URL_AI" -c "SELECT count(*) FROM tag_description;"
 ```
 
-## 8. 매뉴얼 임베딩·적재
+## 8. 매뉴얼 전처리·임베딩·적재
 
-`MANUAL_RAG_ENABLED` 상태와 무관하게 적재할 수 있습니다.
+매뉴얼은 표준 Word(.docx)로 전달되며, 3단계 파이프라인(파싱→전처리→적재)으로
+적재합니다. 같은 파이프라인을 업로드 API로도 실행할 수 있습니다.
 
 ```bash
-djcp-index-manual \
-  --input data/tg_manual/tg_manual_search_chunks_003_015.jsonl \
-  --source-name tg-emergency-manual \
-  --document-version 003 \
-  --parse-version 3
+# CLI 3단계 (기본 경로/값 사용)
+djcp-parse-manual-docx      # docs/*.docx → data/tg_manual/tg_manual_source.jsonl
+djcp-preprocess-manual      # → tg_manual_search_chunks.jsonl (≤1,200자 청크)
+djcp-index-manual           # 임베딩 후 manual_document / manual_chunk 적재
 ```
+
+문서 작성 규칙, 청킹 규칙, 업로드 API 사용법은 **[MANUAL_PREPROCESSING.md](MANUAL_PREPROCESSING.md)** 를 참고하세요.
 
 ## 9. API 실행
 

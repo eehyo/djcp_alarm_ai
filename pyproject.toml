@@ -12,12 +12,15 @@ dependencies = [
     "psycopg[binary]>=3.2.0",
     "openai>=1.40.0",
     "python-dotenv>=1.0.1",
+    "python-docx>=1.1.0",
+    "python-multipart>=0.0.9",
 ]
 
 [project.scripts]
 djcp-llm-smoke-test = "djcp_alarm_ai.cli.smoke_llm:main"
 djcp-seed-test-alarm = "djcp_alarm_ai.cli.seed_test_alarm:main"
 djcp-test-scenarios = "djcp_alarm_ai.cli.run_scenarios:main"
+djcp-parse-manual-docx = "djcp_alarm_ai.cli.parse_manual_docx:main"
 djcp-preprocess-manual = "djcp_alarm_ai.cli.preprocess_manual:main"
 djcp-index-manual = "djcp_alarm_ai.cli.index_manual:main"
 

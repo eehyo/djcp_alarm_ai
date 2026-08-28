@@ -5,17 +5,18 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from sqlalchemy import text
+from sqlalchemy.orm import Session
 
-from djcp_alarm_ai.config import get_settings
+from djcp_alarm_ai.config import Settings, get_settings
 from djcp_alarm_ai.db import AiSession
-from djcp_alarm_ai.manual_rag import OpenAICompatibleEmbeddingClient
+from djcp_alarm_ai.manual_rag import EmbeddingClient, OpenAICompatibleEmbeddingClient
 
 
 DEFAULT_INPUT = (
     Path(__file__).parents[3]
     / "data"
     / "tg_manual"
-    / "tg_manual_search_chunks_003_015.jsonl"
+    / "tg_manual_search_chunks.jsonl"
 )
 
 UPSERT_DOCUMENT_SQL = text(
@@ -138,12 +139,17 @@ class ManualIndexRecord:
 
 
 def load_manual_records(input_path: Path) -> list[ManualIndexRecord]:
-    records: list[ManualIndexRecord] = []
-    for line in input_path.read_text(encoding="utf-8").splitlines():
-        if not line.strip():
-            continue
-        payload = json.loads(line)
+    payloads = [
+        json.loads(line)
+        for line in input_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    return build_index_records(payloads)
 
+
+def build_index_records(payloads: list[dict]) -> list[ManualIndexRecord]:
+    records: list[ManualIndexRecord] = []
+    for payload in payloads:
         pdf_start, pdf_end = parse_page_range(str(payload["pdf_page"]))
         printed_start, printed_end = parse_page_range(
             str(payload["manual_page"]),
@@ -190,53 +196,95 @@ def index_records(
     file_hash: str,
     document_version: str | None,
     parse_version: str,
+    db: Session | None = None,
+    embedding_client: EmbeddingClient | None = None,
+    settings: Settings | None = None,
 ) -> tuple[int, int]:
-    settings = get_settings()
-    embedding_client = OpenAICompatibleEmbeddingClient(settings)
+    """검색 청크를 임베딩하여 manual_document/manual_chunk에 적재합니다.
+
+    ``db``를 넘기면 호출자가 트랜잭션을 관리하고, 넘기지 않으면 자체 세션을
+    열어 커밋합니다. API와 CLI가 같은 적재 경로를 공유하도록 분리했습니다.
+    """
+    if db is not None:
+        return _index_within_session(
+            db,
+            records=records,
+            source_name=source_name,
+            file_hash=file_hash,
+            document_version=document_version,
+            parse_version=parse_version,
+            embedding_client=embedding_client,
+            settings=settings,
+        )
+    with AiSession() as owned_db, owned_db.begin():
+        return _index_within_session(
+            owned_db,
+            records=records,
+            source_name=source_name,
+            file_hash=file_hash,
+            document_version=document_version,
+            parse_version=parse_version,
+            embedding_client=embedding_client,
+            settings=settings,
+        )
+
+
+def _index_within_session(
+    db: Session,
+    *,
+    records: list[ManualIndexRecord],
+    source_name: str,
+    file_hash: str,
+    document_version: str | None,
+    parse_version: str,
+    embedding_client: EmbeddingClient | None,
+    settings: Settings | None,
+) -> tuple[int, int]:
+    settings = settings or get_settings()
+    embedding_client = embedding_client or OpenAICompatibleEmbeddingClient(settings)
     embedded = 0
     reused = 0
 
-    with AiSession() as db, db.begin():
-        document_id = db.execute(
-            UPSERT_DOCUMENT_SQL,
+    document_id = db.execute(
+        UPSERT_DOCUMENT_SQL,
+        {
+            "source_name": source_name,
+            "file_hash": file_hash,
+            "document_version": document_version,
+            "parse_version": parse_version,
+        },
+    ).scalar_one()
+    db.execute(DEACTIVATE_SOURCE_SQL, {"source_name": source_name})
+
+    for record in records:
+        values = {
+            "document_id": document_id,
+            **record.__dict__,
+        }
+        existing = db.execute(
+            EXISTING_CHUNK_SQL,
+            {"chunk_key": record.chunk_key},
+        ).mappings().one_or_none()
+        if (
+            existing
+            and existing["content_hash"] == record.content_hash
+            and existing["embedding_model"] == settings.embedding_model
+            and existing["has_embedding"]
+        ):
+            db.execute(REFRESH_CHUNK_SQL, values)
+            reused += 1
+            continue
+
+        embedding = embedding_client.embed_one(record.embedding_text)
+        db.execute(
+            UPSERT_CHUNK_SQL,
             {
-                "source_name": source_name,
-                "file_hash": file_hash,
-                "document_version": document_version,
-                "parse_version": parse_version,
+                **values,
+                "embedding_model": settings.embedding_model,
+                "embedding": "[" + ",".join(str(value) for value in embedding) + "]",
             },
-        ).scalar_one()
-        db.execute(DEACTIVATE_SOURCE_SQL, {"source_name": source_name})
-
-        for record in records:
-            values = {
-                "document_id": document_id,
-                **record.__dict__,
-            }
-            existing = db.execute(
-                EXISTING_CHUNK_SQL,
-                {"chunk_key": record.chunk_key},
-            ).mappings().one_or_none()
-            if (
-                existing
-                and existing["content_hash"] == record.content_hash
-                and existing["embedding_model"] == settings.embedding_model
-                and existing["has_embedding"]
-            ):
-                db.execute(REFRESH_CHUNK_SQL, values)
-                reused += 1
-                continue
-
-            embedding = embedding_client.embed_one(record.embedding_text)
-            db.execute(
-                UPSERT_CHUNK_SQL,
-                {
-                    **values,
-                    "embedding_model": settings.embedding_model,
-                    "embedding": "[" + ",".join(str(value) for value in embedding) + "]",
-                },
-            )
-            embedded += 1
+        )
+        embedded += 1
 
     return embedded, reused
 
