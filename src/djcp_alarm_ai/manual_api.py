@@ -47,20 +47,30 @@ LIST_DOCUMENTS_SQL = """
 """
 
 
-class ManualPreviewChunk(BaseModel):
+class ManualChunkView(BaseModel):
     chunk_id: str
-    parent_chunk_id: str | None
     title: str
     pdf_page: int
     content_length: int
 
 
+class ManualSplitSection(BaseModel):
+    parent_chunk_id: str
+    title: str
+    parts: int
+    part_chunk_ids: list[str]
+    content_lengths: list[int]
+
+
 class ManualPreviewResponse(BaseModel):
     metadata: dict[str, str]
-    sections: int
-    search_chunks: int
+    sections: int          # 원본 섹션 후보 수
+    search_chunks: int     # 최종 검색 청크 수
+    whole_sections: int    # 1,200자 이하로 통째 유지된 섹션 수
+    split_sections: int    # 길어서 여러 청크로 쪼개진 섹션 수
     max_content_length: int
-    sample: list[ManualPreviewChunk]
+    splits: list[ManualSplitSection]   # 쪼개진 섹션의 분할 상세
+    sample: list[ManualChunkView]      # 앞부분 청크 미리보기
 
 
 class ManualIngestResponse(BaseModel):
@@ -129,19 +139,43 @@ def _parse_docx(data: bytes) -> ParsedManual:
 async def preview_manual_document(
     file: UploadFile = File(...),
 ) -> ManualPreviewResponse:
-    """임베딩·DB 적재 없이 파싱과 전처리 결과만 미리 확인합니다."""
+    """임베딩·DB 적재 없이 파싱·전처리 결과와 청크 분할 내역을 확인합니다."""
     data = await _read_docx_upload(file)
     parsed = _parse_docx(data)
     search_chunks = preprocess_records(parsed.records)
+
+    # parent_chunk_id 로 묶어 쪼개진 섹션을 복원합니다(원문 순서 유지).
+    split_groups: dict[str, list[dict]] = {}
+    whole_sections = 0
+    for chunk in search_chunks:
+        parent = chunk["parent_chunk_id"]
+        if parent is None:
+            whole_sections += 1
+        else:
+            split_groups.setdefault(parent, []).append(chunk)
+
+    splits = [
+        ManualSplitSection(
+            parent_chunk_id=parent,
+            title=parts[0]["title"],
+            parts=len(parts),
+            part_chunk_ids=[part["chunk_id"] for part in parts],
+            content_lengths=[len(part["content"]) for part in parts],
+        )
+        for parent, parts in split_groups.items()
+    ]
+
     return ManualPreviewResponse(
         metadata=parsed.metadata,
         sections=len(parsed.records),
         search_chunks=len(search_chunks),
+        whole_sections=whole_sections,
+        split_sections=len(split_groups),
         max_content_length=max(len(c["content"]) for c in search_chunks),
+        splits=splits,
         sample=[
-            ManualPreviewChunk(
+            ManualChunkView(
                 chunk_id=chunk["chunk_id"],
-                parent_chunk_id=chunk["parent_chunk_id"],
                 title=chunk["title"],
                 pdf_page=int(str(chunk["pdf_page"]).split("-")[0]),
                 content_length=len(chunk["content"]),

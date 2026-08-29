@@ -88,7 +88,10 @@ GET  /v2/manual/documents          # 적재된 매뉴얼 문서 목록
 ```
 
 ```bash
-# 파이프라인 점검 (임베딩 서버 불필요) — 섹션/청크 수, 최대 길이, 샘플 5개 반환
+# 파이프라인 점검 (임베딩 서버 불필요)
+#  - sections/search_chunks: 원본 섹션 수 / 최종 청크 수
+#  - whole_sections/split_sections: 통째 유지 / 쪼개진 섹션 수
+#  - splits[]: 쪼개진 섹션별 조각 ID와 각 조각 길이
 curl -F "file=@docs/새매뉴얼.docx" \
   http://localhost:8000/v2/manual/documents/preview
 
@@ -110,7 +113,31 @@ curl -F "file=@docs/새매뉴얼.docx" \
 - 임베딩 모델을 바꾸면(`EMBEDDING_MODEL`) 차원과 기존 색인을 함께 교체해야 합니다
   (`bge-m3` = 1024차원).
 
-## 7. 관련 파일
+## 7. 적재 결과 확인
+
+**적재 전(파일·구조 점검)**: `/documents/preview`의 `whole_sections`·`split_sections`·
+`splits[]`로 어느 섹션이 통째 유지되고 어느 긴 섹션이 몇 조각으로 쪼개졌는지 봅니다.
+
+**적재 후(DB 실제 상태)**:
+
+```bash
+# 문서별 활성/전체 청크 수
+psql "$PSQL_URL_AI" -c "SELECT md.source_name, count(*) FILTER (WHERE mc.is_active) AS active, count(mc.id) AS total FROM manual_document md LEFT JOIN manual_chunk mc ON mc.document_id=md.id GROUP BY 1 ORDER BY 1;"
+
+# 쪼개진 섹션 목록 (parent_chunk_key = 원본 절, parts = 조각 수)
+psql "$PSQL_URL_AI" -c "SELECT parent_chunk_key, count(*) AS parts FROM manual_chunk WHERE is_active AND parent_chunk_key IS NOT NULL GROUP BY 1 ORDER BY parts DESC LIMIT 20;"
+
+# 특정 섹션의 조각과 각 길이 (예: tg-manual-123)
+psql "$PSQL_URL_AI" -c "SELECT chunk_key, length(content) AS len, section_title FROM manual_chunk WHERE is_active AND chunk_key LIKE 'tg-manual-123%' ORDER BY chunk_key;"
+
+# 통째 유지된 절 = parent_chunk_key IS NULL, 쪼개진 절 = NOT NULL
+psql "$PSQL_URL_AI" -c "SELECT (parent_chunk_key IS NULL) AS whole_section, count(*) FROM manual_chunk WHERE is_active GROUP BY 1;"
+```
+
+`chunk_key`가 `…-sNN`이면 분리된 조각이고, `parent_chunk_key`가 원본 절을 가리킵니다.
+접미사 없는 `chunk_key`(예: `tg-manual-002`)는 1,200자 이하로 통째 유지된 절입니다.
+
+## 8. 관련 파일
 
 - `docs/…​.docx` — 원본 매뉴얼(전달본)
 - `data/tg_manual/tg_manual_source.jsonl` — 파싱 결과(검수 후보)

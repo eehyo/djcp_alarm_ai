@@ -242,6 +242,17 @@ def test_preview_endpoint_returns_pipeline_summary() -> None:
     assert body["metadata"]["문서번호"] == "FV-TG-OM-001"
     assert len(body["sample"]) == 5
 
+    # 통째 유지 + 쪼개진 섹션 = 원본 섹션 수
+    assert body["whole_sections"] + body["split_sections"] == body["sections"]
+    # 쪼개진 섹션들의 조각 합 + 통째 섹션 = 전체 청크 수
+    split_parts = sum(section["parts"] for section in body["splits"])
+    assert body["whole_sections"] + split_parts == body["search_chunks"]
+    assert len(body["splits"]) == body["split_sections"]
+    # 각 분할 섹션은 2조각 이상이고 모든 조각이 1,200자 이하
+    for section in body["splits"]:
+        assert section["parts"] >= 2
+        assert all(length <= 1200 for length in section["content_lengths"])
+
 
 @requires_docx
 def test_upload_endpoint_ingests_with_injected_dependencies() -> None:
